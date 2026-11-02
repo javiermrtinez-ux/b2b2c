@@ -7,8 +7,15 @@ const q = ref('')
 const rows = computed(() => {
   const term = q.value.trim().toLowerCase()
   const all = affiliates.value || []
-  return term ? all.filter((a) => String(a.name || a.id).toLowerCase().includes(term)) : all
+  if (!term) return all
+  return all.filter((a) =>
+    [a.name, a.id, ...a.programs.flatMap((p: any) => [p.id, p.name]), ...a.sources.flatMap((s: any) => [s.url, s.name])]
+      .some((v) => String(v ?? '').toLowerCase().includes(term))
+  )
 })
+
+// Solo enlaces http(s): la URL viene de Tradedoubler y no debe poder ejecutar nada.
+const safeUrl = (u: string | null) => (u && /^https?:\/\//i.test(u) ? u : null)
 
 async function saveRule(a: any) {
   try {
@@ -25,16 +32,29 @@ async function saveRule(a: any) {
 <template>
   <section class="card">
     <header class="card-head">
-      <div><h2>Afiliados</h2><p class="sub">Regla de comisión por afiliado: % sobre la renovación o importe fijo</p></div>
-      <input v-model="q" class="input" type="search" placeholder="Buscar afiliado" aria-label="Buscar afiliado" />
+      <div><h2>Afiliados</h2><p class="sub">Regla para calcular la comisión cuando se confirma la renovación: % sobre la renovación o importe fijo</p></div>
+      <input v-model="q" class="input" type="search" placeholder="Buscar por nombre, ID o web" aria-label="Buscar afiliado por nombre, ID o web" />
     </header>
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Afiliado</th><th class="num">Ventas</th><th class="num">Comisiones</th><th>Regla</th><th /></tr></thead>
+        <thead><tr><th>Affiliate ID</th><th>Nombre</th><th>Program ID</th><th>URL</th><th class="num">Ventas</th><th class="num">Comisión Tradedoubler</th><th class="num">Comisión por renovación</th><th>Regla</th><th /></tr></thead>
         <tbody>
           <tr v-for="a in rows" :key="a.id">
-            <td><b>{{ a.name || a.id }}</b><small class="mono block">{{ a.id }}</small></td>
+            <td class="mono">{{ a.id }}</td>
+            <td><b>{{ a.name || '—' }}</b></td>
+            <td class="cell-list">
+              <span v-for="p in a.programs" :key="p.id" :title="p.name"><span class="mono">{{ p.id }}</span> <small class="muted">{{ p.name }}</small></span>
+              <span v-if="!a.programs.length" class="muted">—</span>
+            </td>
+            <td class="cell-list">
+              <span v-for="w in a.sources" :key="w.id">
+                <a v-if="safeUrl(w.url)" :href="safeUrl(w.url)!" target="_blank" rel="noopener noreferrer">{{ w.url }}</a>
+                <span v-else class="muted">{{ w.name || `Web ${w.id}` }} (sin URL)</span>
+              </span>
+              <span v-if="!a.sources.length" class="muted">—</span>
+            </td>
             <td class="num">{{ int(a.sales) }}</td>
+            <td class="num">{{ eur(a.td_commissions) }}</td>
             <td class="num">{{ eur(a.commissions) }}</td>
             <td>
               <div class="rule">
@@ -47,7 +67,7 @@ async function saveRule(a: any) {
             </td>
             <td class="num"><button class="btn" type="button" @click="saveRule(a)">Guardar</button></td>
           </tr>
-          <tr v-if="affiliates && !rows.length"><td colspan="5" class="empty-line">No hay afiliados que coincidan.</td></tr>
+          <tr v-if="affiliates && !rows.length"><td colspan="9" class="empty-line">No hay afiliados que coincidan.</td></tr>
         </tbody>
       </table>
     </div>

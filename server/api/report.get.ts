@@ -1,5 +1,10 @@
 import { getDb } from '../utils/db'
+import { parseFilters } from '../utils/filters'
+import { filterableKeys } from '../utils/glossary'
 import { buildReport, parsePeriod } from '../utils/report'
 
-/** Tablero: /api/report?period=3m|6m|12m (12m por defecto). */
-export default defineEventHandler((event) => buildReport(getDb(), parsePeriod(getQuery(event).period)))
+export default defineEventHandler((event) => {
+  const q = getQuery(event)
+  const db = getDb()
+  return buildReport(db, parsePeriod(q.period), new Date(), parseFilters(q, filterableKeys(db)))
+})

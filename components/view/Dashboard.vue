@@ -12,6 +12,12 @@ const PERIODS = [
   { key: '12m', label: 'Últimos 12 meses' }
 ]
 const r = computed(() => props.report)
+const { customDates } = useFilters()
+const rangeLabel = computed(() => {
+  if (!r.value) return ''
+  const f = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+  return `${f.format(new Date(r.value.from))} – ${f.format(new Date(new Date(r.value.to).getTime() - 1))}`
+})
 
 // «Evolución de ventas» en barras (periodo elegido) o en línea con proyección (12 meses cerrados + 4).
 const chartView = ref<'bars' | 'line'>('bars')
@@ -45,6 +51,7 @@ const tone = (name: string) => (Array.from(String(name)).reduce((h, c) => h + c.
 </script>
 
 <template>
+  <PanelFilterBar />
   <div v-if="r" class="dash">
     <section class="card pipeline-card">
       <header class="card-head">
@@ -54,7 +61,8 @@ const tone = (name: string) => (Array.from(String(name)).reduce((h, c) => h + c.
             <button type="button" :class="{ on: chartView === 'bars' }" :aria-pressed="chartView === 'bars'" @click="chartView = 'bars'">Barras</button>
             <button type="button" :class="{ on: chartView === 'line' }" :aria-pressed="chartView === 'line'" @click="chartView = 'line'">Línea</button>
           </div>
-          <select v-if="chartView === 'bars'" class="pill-select" :value="period" aria-label="Periodo" @change="emit('update:period', ($event.target as HTMLSelectElement).value)">
+          <span v-if="chartView === 'bars' && customDates" class="pill-select range-pill">{{ rangeLabel }}</span>
+          <select v-else-if="chartView === 'bars'" class="pill-select" :value="period" aria-label="Periodo" @change="emit('update:period', ($event.target as HTMLSelectElement).value)">
             <option v-for="p in PERIODS" :key="p.key" :value="p.key">{{ p.label }}</option>
           </select>
         </div>
@@ -198,6 +206,22 @@ const tone = (name: string) => (Array.from(String(name)).reduce((h, c) => h + c.
         <span class="info" :title="`Importe válido del periodo y variación frente a los ${period === '3m' ? '3' : period === '6m' ? '6' : '12'} meses anteriores`" aria-hidden="true">i</span>
       </header>
       <PanelDistribution :rows="r.byProgram" />
+    </section>
+
+    <section class="card td-card">
+      <header class="card-head">
+        <div>
+          <h2>Comisiones de Tradedoubler</h2>
+          <p class="sub">De la venta original, en el periodo</p>
+        </div>
+        <button class="icon-btn" type="button" aria-label="Ver comisiones" @click="emit('go', 'commissions')"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg></button>
+      </header>
+      <ul class="td-comm">
+        <li><span><i class="dot dot-green" />Aceptadas</span><b>{{ eur(r.tdCommissions.accepted.amount) }}</b><small>{{ int(r.tdCommissions.accepted.count) }}</small></li>
+        <li><span><i class="dot dot-amber" />Pendientes</span><b>{{ eur(r.tdCommissions.pending.amount) }}</b><small>{{ int(r.tdCommissions.pending.count) }}</small></li>
+        <li><span><i class="dot dot-red" />Denegadas</span><b>{{ eur(r.tdCommissions.denied.amount) }}</b><small>{{ int(r.tdCommissions.denied.count) }}</small></li>
+        <li class="td-paid"><span>Ya pagado por Tradedoubler</span><b>{{ eur(r.tdCommissions.paid) }}</b></li>
+      </ul>
     </section>
   </div>
 </template>

@@ -1,7 +1,7 @@
 import { getDb, kvGet, kvSet } from './db'
 import { computeCommission, type CommissionType } from './commission'
 import { getPartner } from './partner'
-import { saveTransactions } from './sales-store'
+import { applyHistory, saveSources, saveTransactions } from './sales-store'
 import { syncWindowStart } from './dates'
 import { TradedoublerClient, type TdTransaction } from './tradedoubler'
 
@@ -20,7 +20,39 @@ function sampleTransactions(from: Date): TdTransaction[] {
     rxNumber: `DEMO-${i}`,
     orderValue: 40 + (i % 5) * 10,
     eventTypeId: 5,
-    valid: true
+    valid: true,
+    // Campos extra de ejemplo para probar el glosario y los filtros.
+    eventName: 'Venta',
+    eventTypeName: 'Sale',
+    sourceId: 2000 + (i % 3),
+    sourceName: ['Blog Norte', 'Comparador Sur', 'Cupones Este'][i % 3],
+    device: { dvClass: ['Desktop', 'Smartphone', 'Tablet'][i % 3], osName: ['Windows', 'Android', 'iOS'][i % 3], agName: ['Chrome', 'Chrome Mobile', 'Safari'][i % 3] }
+  }) as TdTransaction)
+}
+
+/** Histórico de ejemplo para el modo demo: comisión del 10 %, estados variados y algunos pagados. */
+function sampleHistory(txs: TdTransaction[]): unknown[] {
+  return txs.map((t, i) => ({
+    transactionId: t.transactionId,
+    status: ['A', 'A', 'P', 'D'][i % 4],
+    paid: i % 4 === 0,
+    commission: Math.round((t.orderValue ?? 0) * 10) / 100,
+    totalCommission: Math.round((t.orderValue ?? 0) * 13) / 100,
+    voucherCode: i % 5 === 0 ? 'DEMO10' : null,
+    segmentName: ['Contenido', 'Comparadores', 'Cupones'][i % 3],
+    crossDevice: i % 6 === 0 ? 'Yes' : 'No',
+    validationMethodName: 'Manual'
+  }))
+}
+
+function sampleSources(): unknown[] {
+  return ['Blog Norte', 'Comparador Sur', 'Cupones Este'].map((name, i) => ({
+    id: 2000 + i,
+    name,
+    url: `https://${name.toLowerCase().replace(' ', '-')}.example`,
+    publisherOrgId: 1000 + i,
+    countryCode: 'ES',
+    promotionTypeName: ['Contenido', 'Comparador', 'Cupones'][i]
   }))
 }
 
@@ -33,13 +65,28 @@ export async function syncSales(config: Config) {
   const from = syncWindowStart(kvGet('last_sync_at'), defaultFrom, Number(config.td.lookbackDays))
   const now = new Date()
 
-  const txs = useReal
-    ? await new TradedoublerClient(config.td).fetchTransactions(from, now)
-    : sampleTransactions(defaultFrom)
+  const client = useReal ? new TradedoublerClient(config.td) : null
+  const txs = client ? await client.fetchTransactions(from, now) : sampleTransactions(defaultFrom)
 
   const imported = saveTransactions(db, txs, config.renewalDays)
+  // Comisión, estado y pago según Tradedoubler (endpoint histórico). Si falla, las ventas ya quedan guardadas
+  // y se reintenta en la siguiente sincronización.
+  let history: { updated: number } | { error: string }
+  try {
+    const items = client ? await client.fetchHistory(from, now) : sampleHistory(txs)
+    history = { updated: applyHistory(db, items) }
+  } catch (e) {
+    history = { error: (e as Error).message }
+  }
+  // Webs de los afiliados (para su URL). Igual que el histórico: si falla, no bloquea la sincronización.
+  let sources: { saved: number } | { error: string }
+  try {
+    sources = { saved: saveSources(db, client ? await client.fetchSources() : sampleSources()) }
+  } catch (e) {
+    sources = { error: (e as Error).message }
+  }
   kvSet('last_sync_at', now.toISOString())
-  return { imported, mode: useReal ? 'tradedoubler' : 'demo' }
+  return { imported, history, sources, mode: useReal ? 'tradedoubler' : 'demo' }
 }
 
 /** Crea las comisiones de ventas ya renovadas que no la tienen (p. ej. tras configurar la regla del afiliado). */
@@ -90,6 +137,9 @@ export async function processRenewals(config: Config) {
   const setStatus = db.prepare(
     'UPDATE sales SET renewal_status = ?, renewal_amount = ?, renewal_checked_at = ? WHERE transaction_id = ?'
   )
+  const logCheck = db.prepare(
+    'INSERT INTO renewal_checks (transaction_id, checked_at, status, amount, source) VALUES (?, ?, ?, ?, ?)'
+  )
   const getRule = db.prepare('SELECT commission_type, commission_value FROM affiliates WHERE id = ?')
   const insertCommission = db.prepare(`
     INSERT OR IGNORE INTO commissions (transaction_id, affiliate_id, base_amount, rule_type, rule_value, amount, created_at)
@@ -107,6 +157,7 @@ export async function processRenewals(config: Config) {
     result.checked++
     const nowIso = new Date().toISOString()
     setStatus.run(check.status, check.amount ?? null, nowIso, s.transaction_id)
+    logCheck.run(s.transaction_id, nowIso, check.status, check.amount ?? null, config.partner.mode)
     if (check.status === 'unknown') result.unknown++
     else if (check.status === 'not_renewed') result.notRenewed++
     else {

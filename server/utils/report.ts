@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { dayAfter, salesSource, type Filters } from './filters.ts'
 
 const DAY = 86_400_000
 
@@ -56,34 +57,49 @@ const round2 = (n: number) => Math.round((n || 0) * 100) / 100
  * válidas y anuladas, ventas por programa, afiliados por volumen, próximas renovaciones, estado de las
  * comisiones y últimas ventas. Todo sale de las tablas que llena la sincronización con Tradedoubler.
  */
-export function buildReport(db: DatabaseSync, period: Period, now = new Date()) {
-  const months = PERIODS[period]
-  const from = monthStart(now, months - 1).toISOString()
-  const prevFrom = monthStart(now, 2 * months - 1).toISOString()
+export function buildReport(db: DatabaseSync, period: Period, now = new Date(), filters: Filters = { extra: {} }) {
+  // Rango: el periodo (meses hasta hoy) o las fechas elegidas en los filtros. El anterior tiene la misma duración.
+  const custom = Boolean(filters.from || filters.to)
   const nowIso = now.toISOString()
+  const endDate = filters.to ? new Date(dayAfter(filters.to)) : now
+  const fromDate = filters.from ? new Date(`${filters.from}T00:00:00Z`) : monthStart(endDate, PERIODS[period] - 1)
+  const from = fromDate.toISOString()
+  const end = endDate.toISOString()
+  const prevFrom = custom
+    ? new Date(fromDate.getTime() - (endDate.getTime() - fromDate.getTime())).toISOString()
+    : monthStart(now, 2 * PERIODS[period] - 1).toISOString()
+  const months = custom
+    ? (endDate.getUTCFullYear() - fromDate.getUTCFullYear()) * 12 + endDate.getUTCMonth() - fromDate.getUTCMonth() + (endDate.getUTCDate() === 1 && endDate > fromDate ? 0 : 1)
+    : PERIODS[period]
+  const lastMonth = custom ? new Date(endDate.getTime() - 1) : now
+
+  // Programa, afiliado y campos extra: todas las consultas leen de la tabla de ventas ya filtrada ({S}).
+  const src = salesSource(filters)
+  const q = (sql: string) => {
+    const st = db.prepare(sql.replaceAll('{S}', src.sql))
+    return { get: (...a: any[]) => st.get(...src.args, ...a), all: (...a: any[]) => st.all(...src.args, ...a) }
+  }
 
   const totals = (a: string, b: string) =>
-    db
-      .prepare(
-        `SELECT COUNT(*) AS count, COALESCE(SUM(order_value), 0) AS value FROM sales
+    q(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(order_value), 0) AS value FROM {S}
          WHERE valid = 1 AND occurred_at >= ? AND occurred_at < ?`
       )
       .get(a, b) as { count: number; value: number }
-  const cur = totals(from, nowIso)
+  const cur = totals(from, end)
   const prev = totals(prevFrom, from)
 
   // Tasa de renovación: de las ventas cuyo plazo ya venció y tienen respuesta, cuántas renovaron.
-  const ren = db
-    .prepare(
+  const ren = q(
       `SELECT SUM(renewal_status = 'renewed') AS renewed, SUM(renewal_status = 'not_renewed') AS lost,
               SUM(renewal_status = 'pending') AS pending
-       FROM sales WHERE valid = 1`
+       FROM {S} WHERE valid = 1`
     )
     .get() as { renewed: number | null; lost: number | null; pending: number | null }
   const decided = (ren.renewed ?? 0) + (ren.lost ?? 0)
 
-  const comm = db
-    .prepare(`SELECT status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount FROM commissions GROUP BY status`)
+  const comm = q(`SELECT status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount FROM commissions
+       WHERE transaction_id IN (SELECT transaction_id FROM {S}) GROUP BY status`)
     .all() as Array<{ status: string; count: number; amount: number }>
   const commissions = Object.fromEntries(
     ['pending', 'approved', 'paid'].map((s) => {
@@ -92,16 +108,32 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
     })
   ) as Record<'pending' | 'approved' | 'paid', { count: number; amount: number }>
 
-  const monthlyRows = db
-    .prepare(
+  // Comisión de la venta original según Tradedoubler, en el periodo, por estado.
+  const tdRows = q(
+    `SELECT td_status AS status, COUNT(*) AS count, COALESCE(SUM(td_commission), 0) AS amount,
+            COALESCE(SUM(CASE WHEN td_paid = 1 THEN td_commission END), 0) AS paid
+     FROM {S} WHERE td_commission IS NOT NULL AND occurred_at >= ? AND occurred_at < ? GROUP BY td_status`
+  ).all(from, end) as Array<{ status: string | null; count: number; amount: number; paid: number }>
+  const tdOf = (st: string) => {
+    const r = tdRows.find((x) => x.status === st)
+    return { count: r?.count ?? 0, amount: round2(r?.amount ?? 0) }
+  }
+  const tdCommissions = {
+    pending: tdOf('pending'),
+    accepted: tdOf('accepted'),
+    denied: tdOf('denied'),
+    paid: round2(tdRows.reduce((t, r) => t + (r.paid || 0), 0))
+  }
+
+  const monthlyRows = q(
       `SELECT substr(occurred_at, 1, 7) AS month,
               SUM(valid = 1) AS valid, SUM(valid = 0) AS invalid,
               COALESCE(SUM(CASE WHEN valid = 1 THEN order_value END), 0) AS value,
               COALESCE(SUM(CASE WHEN valid = 0 THEN order_value END), 0) AS invalid_value
-       FROM sales WHERE occurred_at >= ? AND occurred_at < ? GROUP BY month`
+       FROM {S} WHERE occurred_at >= ? AND occurred_at < ? GROUP BY month`
     )
-    .all(from, nowIso) as Array<{ month: string; valid: number; invalid: number; value: number; invalid_value: number }>
-  const monthly = monthKeys(now, months).map((month) => {
+    .all(from, end) as Array<{ month: string; valid: number; invalid: number; value: number; invalid_value: number }>
+  const monthly = monthKeys(lastMonth, months).map((month) => {
     const r = monthlyRows.find((m) => m.month === month)
     return {
       month,
@@ -113,16 +145,15 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
   })
 
   const programRows = (from_: string, to: string) =>
-    db
-      .prepare(
+    q(
         `SELECT COALESCE(program_name, 'Programa ' || program_id, 'Sin programa') AS label,
                 COUNT(*) AS count, COALESCE(SUM(order_value), 0) AS value
-         FROM sales WHERE valid = 1 AND occurred_at >= ? AND occurred_at < ?
+         FROM {S} WHERE valid = 1 AND occurred_at >= ? AND occurred_at < ?
          GROUP BY program_id ORDER BY value DESC`
       )
       .all(from_, to) as Array<{ label: string; count: number; value: number }>
   const prevByLabel = new Map(programRows(prevFrom, from).map((r) => [r.label, r.value]))
-  const byProgram = topWithOthers(programRows(from, nowIso).map((r) => ({ ...r, value: round2(r.value) }))).map((r) => {
+  const byProgram = topWithOthers(programRows(from, end).map((r) => ({ ...r, value: round2(r.value) }))).map((r) => {
     const prevValue =
       r.label === 'Otros'
         ? null
@@ -131,22 +162,20 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
   })
 
   const topAffiliates = (
-    db
-      .prepare(
+    q(
         `SELECT s.affiliate_id AS id, COALESCE(a.name, 'Afiliado ' || s.affiliate_id) AS label,
                 COUNT(*) AS count, COALESCE(SUM(s.order_value), 0) AS value
-         FROM sales s LEFT JOIN affiliates a ON a.id = s.affiliate_id
+         FROM {S} s LEFT JOIN affiliates a ON a.id = s.affiliate_id
          WHERE s.valid = 1 AND s.occurred_at >= ? AND s.occurred_at < ?
          GROUP BY s.affiliate_id ORDER BY value DESC LIMIT 8`
       )
-      .all(from, nowIso) as Array<{ id: number; label: string; count: number; value: number }>
+      .all(from, end) as Array<{ id: number; label: string; count: number; value: number }>
   ).map((r) => ({ ...r, value: round2(r.value) }))
 
   const upcomingCount = (days: number) =>
     (
-      db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM sales
+      q(
+          `SELECT COUNT(*) AS n FROM {S}
            WHERE valid = 1 AND renewal_status = 'pending' AND renewal_due_at >= ? AND renewal_due_at < ?`
         )
         .get(nowIso, new Date(now.getTime() + days * DAY).toISOString()) as { n: number }
@@ -155,11 +184,10 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
     in30: upcomingCount(30),
     in60: upcomingCount(60),
     in90: upcomingCount(90),
-    next: db
-      .prepare(
+    next: q(
         `SELECT s.transaction_id, s.order_number, s.order_value, s.renewal_due_at,
                 COALESCE(a.name, 'Afiliado ' || s.affiliate_id) AS affiliate_name
-         FROM sales s LEFT JOIN affiliates a ON a.id = s.affiliate_id
+         FROM {S} s LEFT JOIN affiliates a ON a.id = s.affiliate_id
          WHERE s.valid = 1 AND s.renewal_status = 'pending' AND s.renewal_due_at >= ?
          ORDER BY s.renewal_due_at LIMIT 6`
       )
@@ -169,24 +197,22 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
   // Afiliados del periodo repartidos en tres grupos por importe: el 20 % de arriba, el 30 % siguiente y el resto.
   const segments = segmentAffiliates(
     (
-      db
-        .prepare(
+      q(
           `SELECT s.affiliate_id AS id, COALESCE(a.name, 'Afiliado ' || s.affiliate_id) AS label,
                   COUNT(*) AS count, COALESCE(SUM(s.order_value), 0) AS value
-           FROM sales s LEFT JOIN affiliates a ON a.id = s.affiliate_id
+           FROM {S} s LEFT JOIN affiliates a ON a.id = s.affiliate_id
            WHERE s.valid = 1 AND s.occurred_at >= ? AND s.occurred_at < ?
            GROUP BY s.affiliate_id ORDER BY value DESC`
         )
-        .all(from, nowIso) as Array<{ id: number; label: string; count: number; value: number }>
+        .all(from, end) as Array<{ id: number; label: string; count: number; value: number }>
     ).map((r) => ({ ...r, value: round2(r.value) }))
   )
 
   // Ventas válidas de los últimos 30 días, día a día.
   const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
   const dailyFrom = new Date(dayStart - 29 * DAY).toISOString()
-  const dailyRows = db
-    .prepare(
-      `SELECT substr(occurred_at, 1, 10) AS day, COUNT(*) AS count FROM sales
+  const dailyRows = q(
+      `SELECT substr(occurred_at, 1, 10) AS day, COUNT(*) AS count FROM {S}
        WHERE valid = 1 AND occurred_at >= ? AND occurred_at < ? GROUP BY day`
     )
     .all(dailyFrom, nowIso) as Array<{ day: string; count: number }>
@@ -200,9 +226,8 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
     const a = new Date(dayStart + i * 7 * DAY)
     const b = new Date(dayStart + (i + 1) * 7 * DAY)
     const n = (
-      db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM sales WHERE valid = 1 AND renewal_status = 'pending'
+      q(
+          `SELECT COUNT(*) AS n FROM {S} WHERE valid = 1 AND renewal_status = 'pending'
            AND renewal_due_at >= ? AND renewal_due_at < ?`
         )
         .get(a.toISOString(), b.toISOString()) as { n: number }
@@ -211,11 +236,10 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
   })
 
   // Tasa de renovación por mes de vencimiento (solo ventas con respuesta del partner).
-  const healthRows = db
-    .prepare(
+  const healthRows = q(
       `SELECT substr(renewal_due_at, 1, 7) AS month, SUM(renewal_status = 'renewed') AS renewed,
               SUM(renewal_status = 'not_renewed') AS lost
-       FROM sales WHERE valid = 1 AND renewal_due_at >= ? AND renewal_due_at < ? GROUP BY month`
+       FROM {S} WHERE valid = 1 AND renewal_due_at >= ? AND renewal_due_at < ? GROUP BY month`
     )
     .all(monthStart(now, 11).toISOString(), nowIso) as Array<{ month: string; renewed: number; lost: number }>
   const renewalHealth = monthKeys(now, 12).map((month) => {
@@ -226,26 +250,27 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
 
   // Para la vista en línea con proyección: importe válido de los 12 últimos meses cerrados, sea cual sea el periodo.
   const trendKeys = monthKeys(now, 13).slice(0, -1)
-  const trendRows = db
-    .prepare(
-      `SELECT substr(occurred_at, 1, 7) AS month, COALESCE(SUM(order_value), 0) AS value FROM sales
+  const trendRows = q(
+      `SELECT substr(occurred_at, 1, 7) AS month, COALESCE(SUM(order_value), 0) AS value FROM {S}
        WHERE valid = 1 AND occurred_at >= ? AND occurred_at < ? GROUP BY month`
     )
     .all(monthStart(now, 12).toISOString(), monthStart(now, 0).toISOString()) as Array<{ month: string; value: number }>
   const trend = trendKeys.map((month) => ({ month, value: round2(trendRows.find((r) => r.month === month)?.value ?? 0) }))
 
-  const latest = db
-    .prepare(
+  const latest = q(
       `SELECT s.transaction_id, s.occurred_at, s.order_number, s.order_value, s.valid, s.renewal_status, s.program_name,
               COALESCE(a.name, 'Afiliado ' || s.affiliate_id) AS affiliate_name
-       FROM sales s LEFT JOIN affiliates a ON a.id = s.affiliate_id
+       FROM {S} s LEFT JOIN affiliates a ON a.id = s.affiliate_id
+       WHERE s.occurred_at >= ? AND s.occurred_at < ?
        ORDER BY s.occurred_at DESC LIMIT 8`
     )
-    .all()
+    .all(custom ? from : '', end)
 
   return {
     period,
     from,
+    to: end,
+    custom,
     kpis: {
       sales: { value: cur.count, delta: delta(cur.count, prev.count) },
       revenue: { value: round2(cur.value), delta: delta(cur.value, prev.value) },
@@ -263,6 +288,7 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
     renewalHealth,
     upcoming,
     commissions,
+    tdCommissions,
     latest
   }
 }

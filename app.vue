@@ -2,16 +2,17 @@
 import type { Report } from '~/server/utils/report'
 import { eur, int } from '~/utils/format'
 
-type Tab = 'dashboard' | 'sales' | 'affiliates' | 'commissions' | 'settings'
+type Tab = 'dashboard' | 'sales' | 'affiliates' | 'commissions' | 'glossary' | 'settings'
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'dashboard', label: 'Tablero' },
   { key: 'sales', label: 'Ventas' },
   { key: 'affiliates', label: 'Afiliados' },
   { key: 'commissions', label: 'Comisiones' },
+  { key: 'glossary', label: 'Glosario' },
   { key: 'settings', label: 'Ajustes' }
 ]
-const TITLES: Record<Tab, string> = { dashboard: 'Tablero', sales: 'Ventas', affiliates: 'Afiliados', commissions: 'Comisiones', settings: 'Ajustes' }
+const TITLES: Record<Tab, string> = { dashboard: 'Tablero', sales: 'Ventas', affiliates: 'Afiliados', commissions: 'Comisiones', glossary: 'Glosario', settings: 'Ajustes' }
 
 const tab = ref<Tab>('dashboard')
 const period = ref('12m')
@@ -19,7 +20,8 @@ const busy = ref(false)
 const message = ref('')
 
 const { data: summary, refresh: refreshSummary } = useApi<any>('/api/summary')
-const { data: report, refresh: refreshReport, error: reportError } = useApi<Report>(() => `/api/report?period=${period.value}`, [period])
+const { query: filterQuery } = useFilters()
+const { data: report, refresh: refreshReport, error: reportError } = useApi<Report>(() => `/api/report?period=${period.value}${filterQuery.value}`, [period, filterQuery])
 const refreshAll = () => Promise.all([refreshSummary(), refreshReport()])
 // Las vistas de tabla se vuelven a montar tras sincronizar para leer datos frescos.
 const viewKey = ref(0)
@@ -34,6 +36,7 @@ async function sync() {
   try {
     const r = await apiCall('/api/sync', 'POST')
     message.value = `Sincronizado (${r.sales.mode}): ${r.sales.imported} ventas, ${r.renewals.renewed} renovadas, ${r.renewals.commissions} comisiones nuevas.`
+      + ('error' in r.sales.history ? ` No se pudo leer el histórico de Tradedoubler (${r.sales.history.error}); se reintenta en la próxima sincronización.` : '')
     await refreshAll()
     viewKey.value++
   } catch (e: any) {
@@ -74,7 +77,7 @@ const attention = computed(() => {
   const r = report.value
   if (!r) return ''
   const parts = [`${int(r.upcoming.in30)} ${r.upcoming.in30 === 1 ? 'renovación vence' : 'renovaciones vencen'} en los próximos 30 días`]
-  if (r.kpis.pendingCommissions.count) parts.push(`${eur(r.kpis.pendingCommissions.value)} en comisiones por aprobar`)
+  if (r.kpis.pendingCommissions.count) parts.push(`${eur(r.kpis.pendingCommissions.value)} en comisiones pendientes`)
   return parts.join(' y ') + '.'
 })
 const trendCounts = computed(() => report.value?.monthly.map((m) => m.valid) ?? [])
@@ -133,7 +136,8 @@ const trendHealth = computed(() => report.value?.renewalHealth.map((m) => m.rate
       <ViewDashboard v-if="tab === 'dashboard'" v-model:period="period" :report="report" @go="go" />
       <ViewSales v-else-if="tab === 'sales'" :key="`s${viewKey}`" />
       <ViewAffiliates v-else-if="tab === 'affiliates'" :key="`a${viewKey}`" @message="message = $event" @changed="refreshAll" />
-      <ViewCommissions v-else-if="tab === 'commissions'" :key="`c${viewKey}`" @message="message = $event" @changed="refreshAll" />
+      <ViewCommissions v-else-if="tab === 'commissions'" :key="`c${viewKey}`" />
+      <ViewGlossary v-else-if="tab === 'glossary'" @message="message = $event" />
       <ViewSettings v-else :last-sync-at="summary?.lastSyncAt" :busy="busy" @sync="sync" />
     </main>
   </div>

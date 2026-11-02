@@ -19,3 +19,8 @@ export const renewalLabel: Record<string, string> = {
 }
 export const renewalTone: Record<string, string> = { pending: 'info', renewed: 'ok', not_renewed: 'err', unknown: 'muted' }
 export const commissionLabel: Record<string, string> = { pending: 'Pendiente', approved: 'Aprobada', paid: 'Pagada' }
+
+/** Estado de la venta en Tradedoubler (endpoint histórico). */
+export const tdStatusLabel: Record<string, string> = { pending: 'Pendiente', accepted: 'Aceptada', denied: 'Denegada' }
+export const tdStatusTone: Record<string, string> = { pending: 'warn', accepted: 'ok', denied: 'err' }
+export const commissionTone: Record<string, string> = { pending: 'warn', approved: 'info', paid: 'ok' }
