@@ -20,3 +20,14 @@ export function splitRange(from: Date, to: Date, maxDays = 60): Array<{ from: Da
 export function addDays(iso: string, days: number): string {
   return new Date(new Date(iso).getTime() + days * DAY).toISOString()
 }
+
+/**
+ * Inicio del tramo a sincronizar: la primera vez, `defaultFrom`; después, `lookbackDays` antes de la
+ * última sincronización (sin bajar de `defaultFrom`), para recoger cambios de estado tardíos.
+ */
+export function syncWindowStart(lastSyncAt: string | null | undefined, defaultFrom: Date, lookbackDays = 90): Date {
+  if (!lastSyncAt) return defaultFrom
+  const days = Number.isFinite(lookbackDays) && lookbackDays > 0 ? lookbackDays : 90
+  const start = new Date(new Date(lastSyncAt).getTime() - days * DAY)
+  return start < defaultFrom ? defaultFrom : start
+}

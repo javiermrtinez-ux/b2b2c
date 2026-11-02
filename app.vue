@@ -9,13 +9,15 @@ onMounted(() => {
 })
 watch(token, (v) => { try { sessionStorage.setItem('adminToken', v) } catch {} })
 
-const headers = computed(() => (token.value ? { 'x-admin-token': token.value } : undefined))
-const opts = computed(() => ({ headers: headers.value, watch: [token] }))
+const headers = computed<Record<string, string>>(() => (token.value ? { 'x-admin-token': token.value } : {}))
+// La cabecera tiene que ser reactiva: un objeto fijo se quedaba sin token y todo daba 401.
+// Solo en cliente: el token vive en sessionStorage y el servidor no lo conoce.
+const opts = { headers, server: false }
 
-const { data: summary, refresh: refreshSummary } = await useFetch<any>('/api/summary', opts.value)
-const { data: sales, refresh: refreshSales } = await useFetch<any[]>('/api/sales', opts.value)
-const { data: affiliates, refresh: refreshAffiliates } = await useFetch<any[]>('/api/affiliates', opts.value)
-const { data: commissions, refresh: refreshCommissions } = await useFetch<any[]>('/api/commissions', opts.value)
+const { data: summary, refresh: refreshSummary } = await useFetch<any>('/api/summary', opts)
+const { data: sales, refresh: refreshSales } = await useFetch<any[]>('/api/sales', opts)
+const { data: affiliates, refresh: refreshAffiliates } = await useFetch<any[]>('/api/affiliates', opts)
+const { data: commissions, refresh: refreshCommissions } = await useFetch<any[]>('/api/commissions', opts)
 
 const refreshAll = () => Promise.all([refreshSummary(), refreshSales(), refreshAffiliates(), refreshCommissions()])
 

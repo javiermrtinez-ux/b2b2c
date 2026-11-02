@@ -1,7 +1,8 @@
 import { getDb, kvGet, kvSet } from './db'
-import { addDays } from './dates'
 import { computeCommission, type CommissionType } from './commission'
 import { getPartner } from './partner'
+import { saveTransactions } from './sales-store'
+import { syncWindowStart } from './dates'
 import { TradedoublerClient, type TdTransaction } from './tradedoubler'
 
 type Config = ReturnType<typeof useRuntimeConfig>
@@ -10,7 +11,7 @@ type Config = ReturnType<typeof useRuntimeConfig>
 function sampleTransactions(from: Date): TdTransaction[] {
   const names = ['Afiliado Norte', 'Afiliado Sur', 'Afiliado Este']
   return Array.from({ length: 30 }, (_, i) => ({
-    transactionId: 900000 + i,
+    transactionId: String(900000 + i),
     timestamp: new Date(from.getTime() + i * 86_400_000 * 3).toISOString(),
     programId: 1,
     programName: 'Programa demo',
@@ -27,49 +28,16 @@ export async function syncSales(config: Config) {
   const db = getDb()
   const useReal = Boolean(config.td.clientId)
   const defaultFrom = new Date(config.td.syncFrom)
-  // Solapamos 7 días con la última sincronización para recoger cambios de estado (válida/inválida).
-  const last = kvGet('last_sync_at')
-  const from = last ? new Date(new Date(last).getTime() - 7 * 86_400_000) : defaultFrom
+  // Volvemos a revisar los últimos `lookbackDays` días (90 por defecto) para recoger validaciones
+  // y anulaciones que Tradedoubler aplica semanas después de la venta.
+  const from = syncWindowStart(kvGet('last_sync_at'), defaultFrom, Number(config.td.lookbackDays))
   const now = new Date()
 
   const txs = useReal
     ? await new TradedoublerClient(config.td).fetchTransactions(from, now)
     : sampleTransactions(defaultFrom)
 
-  const upsertAffiliate = db.prepare(
-    'INSERT INTO affiliates (id, name) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET name = COALESCE(excluded.name, name)'
-  )
-  const upsertSale = db.prepare(`
-    INSERT INTO sales (transaction_id, occurred_at, program_id, program_name, affiliate_id, order_number, order_value, valid, renewal_due_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(transaction_id) DO UPDATE SET valid = excluded.valid, order_value = excluded.order_value
-  `)
-
-  let imported = 0
-  db.exec('BEGIN')
-  try {
-    for (const t of txs) {
-      // Solo cuentan como venta los eventos con importe de pedido.
-      if (t.orderValue == null) continue
-      upsertAffiliate.run(t.publisherOrganizationId, t.publisherOrganizationName)
-      upsertSale.run(
-        t.transactionId,
-        new Date(t.timestamp).toISOString(),
-        t.programId,
-        t.programName,
-        t.publisherOrganizationId,
-        t.rxNumber,
-        t.orderValue,
-        t.valid ? 1 : 0,
-        addDays(new Date(t.timestamp).toISOString(), config.renewalDays)
-      )
-      imported++
-    }
-    db.exec('COMMIT')
-  } catch (e) {
-    db.exec('ROLLBACK')
-    throw e
-  }
+  const imported = saveTransactions(db, txs, config.renewalDays)
   kvSet('last_sync_at', now.toISOString())
   return { imported, mode: useReal ? 'tradedoubler' : 'demo' }
 }
@@ -87,7 +55,7 @@ export function backfillCommissions(affiliateId: number): number {
        LEFT JOIN commissions c ON c.transaction_id = s.transaction_id
        WHERE s.affiliate_id = ? AND s.renewal_status = 'renewed' AND c.id IS NULL`
     )
-    .all(affiliateId) as Array<{ transaction_id: number; base: number }>
+    .all(affiliateId) as Array<{ transaction_id: string; base: number }>
   const insert = db.prepare(`
     INSERT OR IGNORE INTO commissions (transaction_id, affiliate_id, base_amount, rule_type, rule_value, amount, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -113,7 +81,7 @@ export async function processRenewals(config: Config) {
        WHERE valid = 1 AND renewal_status IN ('pending','unknown') AND renewal_due_at <= ?`
     )
     .all(new Date().toISOString()) as Array<{
-    transaction_id: number
+    transaction_id: string
     order_number: string | null
     affiliate_id: number
     order_value: number | null
