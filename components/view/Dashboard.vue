@@ -81,19 +81,22 @@ const tone = (name: string) => (Array.from(String(name)).reduce((h, c) => h + c.
         <div class="pipe-head">
           <div>
             <p class="big">{{ eur(trendTotal) }}</p>
-            <p class="sub">
+            <p v-if="fc" class="sub">
               Últimos 12 meses cerrados y proyección de los 4 siguientes
               <span class="ci-badge">Intervalo 95 %</span>
             </p>
+            <p v-else class="sub">Últimos 12 meses cerrados</p>
           </div>
-          <div class="seg seg-sm" role="group" aria-label="Escenario">
+          <div v-if="fc" class="seg seg-sm" role="group" aria-label="Escenario">
             <button v-for="sc in SCENARIOS" :key="sc.key" type="button" :class="{ on: scenario === sc.key }" :aria-pressed="scenario === sc.key" @click="scenario = sc.key">{{ sc.label }}</button>
           </div>
         </div>
         <ul class="legend">
           <li><i class="dot dot-orange" />Histórico</li>
-          <li><i class="dash-line" />Proyección</li>
-          <li><i class="dot dot-band" />Intervalo</li>
+          <template v-if="fc">
+            <li><i class="dash-line" />Proyección</li>
+            <li><i class="dot dot-band" />Intervalo</li>
+          </template>
         </ul>
         <PanelTrendChart :rows="r.trend" :scenario="scenario" />
         <footer v-if="fc" class="trend-stats">
