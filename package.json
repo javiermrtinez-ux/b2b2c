@@ -6,7 +6,9 @@
     "dev": "nuxt dev",
     "build": "nuxt build",
     "preview": "nuxt preview",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "td:campos": "node --experimental-strip-types scripts/td-campos.ts",
+    "td:cruce": "node --experimental-strip-types scripts/td-cruce.ts"
   },
   "dependencies": {
     "nuxt": "^3.17.0",

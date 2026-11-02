@@ -52,7 +52,58 @@ export function initSchema(db: DatabaseSync): void {
       status TEXT NOT NULL DEFAULT 'pending',
       created_at TEXT NOT NULL
     );
+    -- Histórico de cada pedido: cada respuesta del conector de renovaciones (si renovó y por cuánto).
+    CREATE TABLE IF NOT EXISTS renewal_checks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      transaction_id TEXT NOT NULL REFERENCES sales (transaction_id),
+      checked_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      amount REAL,
+      source TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_renewal_checks_tx ON renewal_checks (transaction_id, checked_at);
+    -- Webs (fuentes) de los afiliados, del endpoint /network/sources: de aquí sale la URL de cada afiliado.
+    CREATE TABLE IF NOT EXISTS sources (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      url TEXT,
+      publisher_org_id INTEGER,
+      country_code TEXT,
+      promotion_type TEXT,
+      synced_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sources_org ON sources (publisher_org_id);
+    -- Programas de la red (/network/programs): país y si está activo.
+    CREATE TABLE IF NOT EXISTS programs (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      country_code TEXT,
+      active INTEGER,
+      synced_at TEXT NOT NULL
+    );
+    -- Cambios del glosario hechos desde el panel (null = valor por defecto).
+    CREATE TABLE IF NOT EXISTS glossary (
+      key TEXT PRIMARY KEY,
+      label TEXT,
+      description TEXT,
+      visible INTEGER NOT NULL DEFAULT 0,
+      filterable INTEGER NOT NULL DEFAULT 1
+    );
   `)
+  // Solo añade columnas (nunca quita ni renombra):
+  //  extra: JSON con los campos del glosario que se guardan (dispositivo, web, evento…).
+  //  td_*: comisión, estado y pago tal como los da el histórico de Tradedoubler.
+  const cols = new Set((db.prepare("SELECT name FROM pragma_table_info('sales')").all() as Array<{ name: string }>).map((c) => c.name))
+  const add: Array<[string, string]> = [
+    ['extra', 'TEXT'],
+    ['td_status', 'TEXT'],
+    ['td_paid', 'INTEGER'],
+    ['td_commission', 'REAL'],
+    ['td_total_commission', 'REAL'],
+    ['td_checked_at', 'TEXT'],
+    ['td_history_id', 'TEXT']
+  ]
+  for (const [name, type] of add) if (!cols.has(name)) db.exec(`ALTER TABLE sales ADD COLUMN ${name} ${type}`)
 }
 
 /** Bases creadas con transaction_id INTEGER: se reconstruyen sales y commissions con TEXT conservando los datos. */

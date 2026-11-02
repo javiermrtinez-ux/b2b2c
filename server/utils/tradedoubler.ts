@@ -93,6 +93,30 @@ export class TradedoublerClient {
     return parseTdJson(await res.text()) as T
   }
 
+  /** Webs (fuentes) de los afiliados de la red, con su URL. Solo lectura. */
+  async fetchSources(): Promise<unknown[]> {
+    const out: unknown[] = []
+    for (let offset = 0; ; ) {
+      const page = normalizePage(await this.get<unknown>('/network/sources', { limit: 100, offset }))
+      out.push(...page.items)
+      offset += page.items.length
+      if (!page.items.length || offset >= page.total) break
+    }
+    return out
+  }
+
+  /** Programas de la red, con su país. Solo lectura. */
+  async fetchPrograms(): Promise<unknown[]> {
+    const out: unknown[] = []
+    for (let offset = 0; ; ) {
+      const page = normalizePage(await this.get<unknown>('/network/programs', { limit: 100, offset }))
+      out.push(...page.items)
+      offset += page.items.length
+      if (!page.items.length || offset >= page.total) break
+    }
+    return out
+  }
+
   /** Fuentes a consultar: las de NUXT_TD_SOURCE_ID o, si está vacío, todas las de la red. */
   private async sourceIds(): Promise<string[]> {
     const configured = parseIdList(this.cfg.sourceId)
@@ -114,6 +138,41 @@ export class TradedoublerClient {
       for (const chunk of splitRange(from, to)) out.push(...(await this.fetchChunk(sourceId, chunk.from, chunk.to)))
     }
     return out
+  }
+
+  /**
+   * Histórico de transacciones (/network/transactions): trae lo que /latest no da, como la comisión del
+   * afiliado, el estado en Tradedoubler (pendiente, aceptada, denegada) y si está pagada. Solo lectura.
+   */
+  async fetchHistory(from: Date, to: Date): Promise<unknown[]> {
+    const out: unknown[] = []
+    for (const sourceId of await this.sourceIds()) {
+      for (const chunk of splitRange(from, to)) {
+        for (let offset = 0; ; ) {
+          const page = normalizePage(
+            await this.get<unknown>('/network/transactions', {
+              sourceId,
+              fromDate: toYmd(chunk.from),
+              toDate: toYmd(chunk.to),
+              programId: this.cfg.programId,
+              limit: 100,
+              offset
+            })
+          )
+          out.push(...page.items)
+          offset += page.items.length
+          if (!page.items.length || offset >= page.total) break
+        }
+      }
+    }
+    // Este endpoint no filtra por sourceId: la misma transacción llega una vez por fuente.
+    const seen = new Set<string>()
+    return out.filter((it: any) => {
+      const id = String(it?.transactionId ?? '')
+      if (!id || seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
   }
 
   private async fetchChunk(sourceId: string, from: Date, to: Date): Promise<TdTransaction[]> {
