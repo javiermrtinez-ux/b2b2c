@@ -71,7 +71,7 @@ const hover = ref<number | null>(null)
 const showLabel = (i: number) => (W.value - PAD.left) / all.value.length >= 34 || i % 2 === (all.value.length - 1) % 2
 const aria = computed(
   () =>
-    `Importe válido por mes y proyección: ${all.value
+    `Importe válido por mes${fc.value ? " y proyección" : ""}: ${all.value
       .map((p) => `${monthLabel(p.month)}${p.future ? ' (proyección)' : ''} ${eurCompact(p.value)}`)
       .join('; ')}`
 )
