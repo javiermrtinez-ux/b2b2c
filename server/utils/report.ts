@@ -39,6 +39,16 @@ export function topWithOthers<T extends { label: string; value: number; count: n
   return head
 }
 
+export type Segment = 'large' | 'mid' | 'small'
+
+/** Reparte afiliados ya ordenados por importe (de mayor a menor): 20 % grandes, 30 % medianos y el resto pequeños. */
+export function segmentAffiliates<T extends { value: number }>(rows: T[]): Array<T & { segment: Segment }> {
+  const n = rows.length
+  const large = Math.max(1, Math.round(n * 0.2))
+  const mid = Math.round(n * 0.5)
+  return rows.map((r, i) => ({ ...r, segment: (i < large ? 'large' : i < Math.max(mid, large) ? 'mid' : 'small') as Segment }))
+}
+
 const round2 = (n: number) => Math.round((n || 0) * 100) / 100
 
 /**
@@ -86,27 +96,39 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
     .prepare(
       `SELECT substr(occurred_at, 1, 7) AS month,
               SUM(valid = 1) AS valid, SUM(valid = 0) AS invalid,
-              COALESCE(SUM(CASE WHEN valid = 1 THEN order_value END), 0) AS value
+              COALESCE(SUM(CASE WHEN valid = 1 THEN order_value END), 0) AS value,
+              COALESCE(SUM(CASE WHEN valid = 0 THEN order_value END), 0) AS invalid_value
        FROM sales WHERE occurred_at >= ? AND occurred_at < ? GROUP BY month`
     )
-    .all(from, nowIso) as Array<{ month: string; valid: number; invalid: number; value: number }>
+    .all(from, nowIso) as Array<{ month: string; valid: number; invalid: number; value: number; invalid_value: number }>
   const monthly = monthKeys(now, months).map((month) => {
     const r = monthlyRows.find((m) => m.month === month)
-    return { month, valid: r?.valid ?? 0, invalid: r?.invalid ?? 0, value: round2(r?.value ?? 0) }
+    return {
+      month,
+      valid: r?.valid ?? 0,
+      invalid: r?.invalid ?? 0,
+      value: round2(r?.value ?? 0),
+      invalidValue: round2(r?.invalid_value ?? 0)
+    }
   })
 
-  const byProgram = topWithOthers(
-    (
-      db
-        .prepare(
-          `SELECT COALESCE(program_name, 'Programa ' || program_id, 'Sin programa') AS label,
-                  COUNT(*) AS count, COALESCE(SUM(order_value), 0) AS value
-           FROM sales WHERE valid = 1 AND occurred_at >= ? AND occurred_at < ?
-           GROUP BY program_id ORDER BY value DESC`
-        )
-        .all(from, nowIso) as Array<{ label: string; count: number; value: number }>
-    ).map((r) => ({ ...r, value: round2(r.value) }))
-  )
+  const programRows = (from_: string, to: string) =>
+    db
+      .prepare(
+        `SELECT COALESCE(program_name, 'Programa ' || program_id, 'Sin programa') AS label,
+                COUNT(*) AS count, COALESCE(SUM(order_value), 0) AS value
+         FROM sales WHERE valid = 1 AND occurred_at >= ? AND occurred_at < ?
+         GROUP BY program_id ORDER BY value DESC`
+      )
+      .all(from_, to) as Array<{ label: string; count: number; value: number }>
+  const prevByLabel = new Map(programRows(prevFrom, from).map((r) => [r.label, r.value]))
+  const byProgram = topWithOthers(programRows(from, nowIso).map((r) => ({ ...r, value: round2(r.value) }))).map((r) => {
+    const prevValue =
+      r.label === 'Otros'
+        ? null
+        : prevByLabel.get(r.label) ?? 0
+    return { ...r, delta: prevValue == null ? null : delta(r.value, prevValue) }
+  })
 
   const topAffiliates = (
     db
@@ -144,6 +166,64 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
       .all(nowIso)
   }
 
+  // Afiliados del periodo repartidos en tres grupos por importe: el 20 % de arriba, el 30 % siguiente y el resto.
+  const segments = segmentAffiliates(
+    (
+      db
+        .prepare(
+          `SELECT s.affiliate_id AS id, COALESCE(a.name, 'Afiliado ' || s.affiliate_id) AS label,
+                  COUNT(*) AS count, COALESCE(SUM(s.order_value), 0) AS value
+           FROM sales s LEFT JOIN affiliates a ON a.id = s.affiliate_id
+           WHERE s.valid = 1 AND s.occurred_at >= ? AND s.occurred_at < ?
+           GROUP BY s.affiliate_id ORDER BY value DESC`
+        )
+        .all(from, nowIso) as Array<{ id: number; label: string; count: number; value: number }>
+    ).map((r) => ({ ...r, value: round2(r.value) }))
+  )
+
+  // Ventas válidas de los últimos 30 días, día a día.
+  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const dailyFrom = new Date(dayStart - 29 * DAY).toISOString()
+  const dailyRows = db
+    .prepare(
+      `SELECT substr(occurred_at, 1, 10) AS day, COUNT(*) AS count FROM sales
+       WHERE valid = 1 AND occurred_at >= ? AND occurred_at < ? GROUP BY day`
+    )
+    .all(dailyFrom, nowIso) as Array<{ day: string; count: number }>
+  const daily = Array.from({ length: 30 }, (_, i) => {
+    const day = new Date(dayStart - (29 - i) * DAY).toISOString().slice(0, 10)
+    return { day, count: dailyRows.find((d) => d.day === day)?.count ?? 0 }
+  })
+
+  // Renovaciones pendientes que vencen en cada una de las próximas 12 semanas.
+  const weekly = Array.from({ length: 12 }, (_, i) => {
+    const a = new Date(dayStart + i * 7 * DAY)
+    const b = new Date(dayStart + (i + 1) * 7 * DAY)
+    const n = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sales WHERE valid = 1 AND renewal_status = 'pending'
+           AND renewal_due_at >= ? AND renewal_due_at < ?`
+        )
+        .get(a.toISOString(), b.toISOString()) as { n: number }
+    ).n
+    return { week: a.toISOString().slice(0, 10), count: n }
+  })
+
+  // Tasa de renovación por mes de vencimiento (solo ventas con respuesta del partner).
+  const healthRows = db
+    .prepare(
+      `SELECT substr(renewal_due_at, 1, 7) AS month, SUM(renewal_status = 'renewed') AS renewed,
+              SUM(renewal_status = 'not_renewed') AS lost
+       FROM sales WHERE valid = 1 AND renewal_due_at >= ? AND renewal_due_at < ? GROUP BY month`
+    )
+    .all(monthStart(now, 11).toISOString(), nowIso) as Array<{ month: string; renewed: number; lost: number }>
+  const renewalHealth = monthKeys(now, 12).map((month) => {
+    const h = healthRows.find((r) => r.month === month)
+    const decided = (h?.renewed ?? 0) + (h?.lost ?? 0)
+    return { month, decided, rate: decided ? Math.round(((h!.renewed ?? 0) / decided) * 1000) / 10 : null }
+  })
+
   const latest = db
     .prepare(
       `SELECT s.transaction_id, s.occurred_at, s.order_number, s.order_value, s.valid, s.renewal_status, s.program_name,
@@ -166,6 +246,10 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
     monthly,
     byProgram,
     topAffiliates,
+    segments,
+    daily,
+    weekly,
+    renewalHealth,
     upcoming,
     commissions,
     latest

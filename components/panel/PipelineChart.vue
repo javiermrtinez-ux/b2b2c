@@ -1,73 +1,73 @@
 <script setup lang="ts">
 import { eurCompact, int, monthLabel } from '~/utils/format'
 
-/** Evolución mensual: barra apilada de ventas válidas y anuladas, y el importe válido encima. */
-const props = defineProps<{ rows: Array<{ month: string; valid: number; invalid: number; value: number }> }>()
+/** Evolución mensual en euros: importe válido (naranja) y, encima, el anulado (rayado). Eje Y con importes. */
+const props = defineProps<{ rows: Array<{ month: string; valid: number; invalid: number; value: number; invalidValue: number }> }>()
 
-// El ancho sigue al de la tarjeta para que el texto no se deforme al estirar el SVG.
 const el = ref<HTMLElement | null>(null)
-const W = ref(640)
-const H = 280
+const W = ref(560)
+const H = 300
+const PAD = { top: 12, right: 4, bottom: 28, left: 48 }
 let ro: ResizeObserver | undefined
 onMounted(() => {
   ro = new ResizeObserver(([e]) => { W.value = Math.max(280, Math.round(e.contentRect.width)) })
   if (el.value) ro.observe(el.value)
 })
 onBeforeUnmount(() => ro?.disconnect())
-const PAD = { top: 28, right: 8, bottom: 26, left: 8 }
 const hover = ref<number | null>(null)
 
-const max = computed(() => Math.max(1, ...props.rows.map((r) => r.valid + r.invalid)))
-const slot = computed(() => (W.value - PAD.left - PAD.right) / Math.max(1, props.rows.length))
-const barW = computed(() => Math.min(40, slot.value * 0.6))
+/** Máximo del eje redondeado a un número «bonito» y 5 marcas. */
+const scale = computed(() => {
+  const raw = Math.max(1, ...props.rows.map((r) => r.value + r.invalidValue))
+  const step0 = raw / 5
+  const mag = 10 ** Math.floor(Math.log10(step0))
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= step0) ?? 10 * mag
+  return { max: step * 5, ticks: Array.from({ length: 6 }, (_, i) => i * step) }
+})
 const plotH = H - PAD.top - PAD.bottom
-const y = (n: number) => (n / max.value) * plotH
-
+const y = (v: number) => PAD.top + plotH - (v / scale.value.max) * plotH
+const slot = computed(() => (W.value - PAD.left - PAD.right) / Math.max(1, props.rows.length))
+const barW = computed(() => Math.min(46, slot.value * 0.66))
 const bars = computed(() =>
   props.rows.map((r, i) => {
     const x = PAD.left + i * slot.value + (slot.value - barW.value) / 2
-    const hv = y(r.valid)
-    const hi = y(r.invalid)
-    const base = H - PAD.bottom
-    return {
-      ...r,
-      x,
-      validY: base - hv,
-      validH: hv,
-      // 2 px de hueco entre los dos tramos apilados
-      invalidY: base - hv - hi - (hi && hv ? 2 : 0),
-      invalidH: hi,
-      label: monthLabel(r.month)
-    }
+    const yv = y(r.value)
+    const yi = y(r.value + r.invalidValue)
+    return { ...r, x, yv, hv: PAD.top + plotH - yv, yi, hi: yv - yi, label: monthLabel(r.month) }
   })
 )
-const total = computed(() => props.rows.reduce((s, r) => s + r.valid, 0))
-const aria = computed(
-  () => `Ventas por mes: ${props.rows.map((r) => `${monthLabel(r.month)} ${r.valid} válidas y ${r.invalid} anuladas`).join('; ')}`
-)
+const aria = computed(() => `Importe por mes: ${props.rows.map((r) => `${monthLabel(r.month)} ${eurCompact(r.value)} válido y ${eurCompact(r.invalidValue)} anulado`).join('; ')}`)
 </script>
 
 <template>
-  <div ref="el" class="chart">
-    <ul class="legend">
-      <li><i class="sw sw-1" />Válidas</li>
-      <li><i class="sw sw-2" />Anuladas</li>
-      <li class="legend-total">{{ int(total) }} ventas válidas</li>
-    </ul>
-    <svg :viewBox="`0 0 ${W} ${H}`" role="img" :aria-label="aria" class="chart-svg">
-      <line :x1="PAD.left" :x2="W - PAD.right" :y1="H - PAD.bottom" :y2="H - PAD.bottom" class="axis" />
-      <g v-for="(b, i) in bars" :key="b.month" @mouseenter="hover = i" @mouseleave="hover = null">
-        <rect :x="b.x - 6" :y="PAD.top - 20" :width="barW + 12" :height="plotH + 20" class="hit" />
-        <rect v-if="b.invalidH" :x="b.x" :y="b.invalidY" :width="barW" :height="b.invalidH" rx="4" class="bar-2" />
-        <rect v-if="b.validH" :x="b.x" :y="b.validY" :width="barW" :height="b.validH" rx="4" class="bar-1" :class="{ dim: hover !== null && hover !== i }" />
-        <text v-if="hover === i || rows.length <= 6" :x="b.x + barW / 2" :y="Math.min(b.invalidY, b.validY) - 6" class="val">
-          {{ eurCompact(b.value) }}
-        </text>
-        <text :x="b.x + barW / 2" :y="H - 8" class="tick">{{ b.label }}</text>
+  <div ref="el" class="pipe">
+    <svg :viewBox="`0 0 ${W} ${H}`" :height="H" role="img" :aria-label="aria" class="pipe-svg">
+      <defs>
+        <linearGradient id="pipe-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" class="grad-top" />
+          <stop offset="1" class="grad-bottom" />
+        </linearGradient>
+        <pattern id="pipe-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="6" height="6" class="hatch-bg" />
+          <line x1="0" y1="0" x2="0" y2="6" class="hatch-line" />
+        </pattern>
+      </defs>
+      <g v-for="t in scale.ticks" :key="t">
+        <line :x1="PAD.left" :x2="W - PAD.right" :y1="y(t)" :y2="y(t)" class="grid" />
+        <text :x="PAD.left - 8" :y="y(t) + 4" class="ytick">{{ eurCompact(t) }}</text>
+      </g>
+      <g v-for="(b, i) in bars" :key="b.month" class="pipe-col" :class="{ dim: hover !== null && hover !== i }" @mouseenter="hover = i" @mouseleave="hover = null">
+        <rect :x="b.x - 4" :y="PAD.top" :width="barW + 8" :height="plotH" class="hit" />
+        <rect v-if="b.hi > 0.5" :x="b.x" :y="b.yi" :width="barW" :height="b.hi + 6" rx="6" fill="url(#pipe-hatch)" />
+        <rect v-if="b.hv > 0.5" :x="b.x" :y="b.yv" :width="barW" :height="b.hv" rx="6" fill="url(#pipe-grad)" />
+        <text v-if="slot >= 30 || i % 2 === (rows.length - 1) % 2" :x="b.x + barW / 2" :y="H - 8" class="xtick">{{ b.label }}</text>
       </g>
     </svg>
-    <p v-if="hover !== null" class="chart-tip">
-      {{ bars[hover].label }}: {{ int(bars[hover].valid) }} válidas, {{ int(bars[hover].invalid) }} anuladas · {{ eurCompact(bars[hover].value) }}
+    <p class="pipe-tip" aria-live="polite">
+      <template v-if="hover !== null">
+        <b>{{ bars[hover].label }}</b> · {{ eurCompact(bars[hover].value) }} válido ({{ int(bars[hover].valid) }}) · {{ eurCompact(bars[hover].invalidValue) }} anulado ({{ int(bars[hover].invalid) }})
+      </template>
+      <template v-else>Pasa por una barra para ver el detalle del mes.</template>
     </p>
   </div>
 </template>

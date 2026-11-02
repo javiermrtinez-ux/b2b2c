@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { initSchema } from '../server/utils/db.ts'
-import { buildReport, delta, monthKeys, parsePeriod, topWithOthers } from '../server/utils/report.ts'
+import { buildReport, delta, monthKeys, parsePeriod, segmentAffiliates, topWithOthers } from '../server/utils/report.ts'
 
 const NOW = new Date('2026-11-15T12:00:00Z')
 
@@ -60,10 +60,17 @@ test('buildReport: indicadores, evolución y desgloses del periodo', () => {
   assert.equal(r.kpis.pendingCommissions.value, 7.5)
 
   assert.deepEqual(r.monthly.map((m) => m.month), ['2026-09', '2026-10', '2026-11'])
-  assert.deepEqual(r.monthly[0], { month: '2026-09', valid: 0, invalid: 1, value: 0 })
-  assert.deepEqual(r.monthly[2], { month: '2026-11', valid: 1, invalid: 0, value: 100 })
+  assert.deepEqual(r.monthly[0], { month: '2026-09', valid: 0, invalid: 1, value: 0, invalidValue: 30 })
+  assert.deepEqual(r.monthly[2], { month: '2026-11', valid: 1, invalid: 0, value: 100, invalidValue: 0 })
 
-  assert.deepEqual(r.byProgram, [{ label: 'Antivirus', count: 2, value: 150 }])
+  assert.deepEqual(r.byProgram, [{ label: 'Antivirus', count: 2, value: 150, delta: null }])
+  assert.deepEqual(r.segments.map((a) => [a.label, a.segment]), [['Norte', 'large'], ['Sur', 'small']])
+  assert.equal(r.daily.length, 30)
+  assert.equal(r.daily.at(-1)!.day, '2026-11-15')
+  assert.equal(r.daily.find((d) => d.day === '2026-11-02')!.count, 1)
+  assert.equal(r.weekly.length, 12)
+  assert.equal(r.weekly[1].count, 1) // vence el 25 de noviembre
+  assert.deepEqual(r.renewalHealth.find((h) => h.month === '2026-07'), { month: '2026-07', decided: 1, rate: 100 })
   assert.deepEqual(r.topAffiliates.map((a) => [a.label, a.value]), [['Norte', 100], ['Sur', 50]])
 
   assert.equal(r.upcoming.in30, 1)
@@ -72,6 +79,13 @@ test('buildReport: indicadores, evolución y desgloses del periodo', () => {
   assert.deepEqual(r.commissions.paid, { count: 1, amount: 2 })
   assert.equal(r.commissions.approved.count, 0)
   assert.equal(r.latest.length, 5)
+})
+
+test('segmentAffiliates: 20 % grandes, 30 % medianos, resto pequeños', () => {
+  const rows = Array.from({ length: 10 }, (_, i) => ({ value: 100 - i }))
+  const seg = segmentAffiliates(rows).map((r) => r.segment)
+  assert.deepEqual(seg, ['large', 'large', 'mid', 'mid', 'mid', 'small', 'small', 'small', 'small', 'small'])
+  assert.deepEqual(segmentAffiliates([{ value: 1 }]).map((r) => r.segment), ['large'])
 })
 
 test('buildReport con la base vacía no falla', () => {

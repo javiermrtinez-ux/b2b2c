@@ -1,38 +1,31 @@
 <script setup lang="ts">
 import type { Report } from '~/server/utils/report'
-import { dayLabel } from '~/utils/format'
+import { eur, int } from '~/utils/format'
 
-type Tab = 'dashboard' | 'sales' | 'affiliates' | 'commissions'
+type Tab = 'dashboard' | 'sales' | 'affiliates' | 'commissions' | 'settings'
 
-const NAV: Array<{ key: Tab; label: string; icon: string }> = [
-  { key: 'dashboard', label: 'Tablero', icon: '<rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/>' },
-  { key: 'sales', label: 'Ventas', icon: '<path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6"/><circle cx="10" cy="20" r="1"/><circle cx="17" cy="20" r="1"/>' },
-  { key: 'affiliates', label: 'Afiliados', icon: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0M17 4a4 4 0 0 1 0 8M22 21a7 7 0 0 0-4-6.3"/>' },
-  { key: 'commissions', label: 'Comisiones', icon: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>' }
+const TABS: Array<{ key: Tab; label: string }> = [
+  { key: 'dashboard', label: 'Tablero' },
+  { key: 'sales', label: 'Ventas' },
+  { key: 'affiliates', label: 'Afiliados' },
+  { key: 'commissions', label: 'Comisiones' },
+  { key: 'settings', label: 'Ajustes' }
 ]
-const TITLES: Record<Tab, string> = { dashboard: 'Tablero', sales: 'Ventas', affiliates: 'Afiliados', commissions: 'Comisiones' }
-const PERIODS = [
-  { key: '3m', label: '3 meses' },
-  { key: '6m', label: '6 meses' },
-  { key: '12m', label: '12 meses' }
-]
+const TITLES: Record<Tab, string> = { dashboard: 'Tablero', sales: 'Ventas', affiliates: 'Afiliados', commissions: 'Comisiones', settings: 'Ajustes' }
 
 const tab = ref<Tab>('dashboard')
 const period = ref('12m')
 const busy = ref(false)
 const message = ref('')
-const navOpen = ref(false)
-const { token } = useAdminToken()
 
 const { data: summary, refresh: refreshSummary } = useApi<any>('/api/summary')
 const { data: report, refresh: refreshReport, error: reportError } = useApi<Report>(() => `/api/report?period=${period.value}`, [period])
 const refreshAll = () => Promise.all([refreshSummary(), refreshReport()])
-// Las vistas de tabla se vuelven a montar al cambiar de pestaña, así que leen datos frescos.
+// Las vistas de tabla se vuelven a montar tras sincronizar para leer datos frescos.
 const viewKey = ref(0)
 
 function go(t: string) {
   tab.value = t as Tab
-  navOpen.value = false
 }
 
 async function sync() {
@@ -73,72 +66,75 @@ useHead({
 })
 
 const unauthorized = computed(() => (reportError.value as any)?.statusCode === 401)
+const greeting = computed(() => {
+  const h = new Date().getHours()
+  return h < 13 ? 'Buenos días' : h < 21 ? 'Buenas tardes' : 'Buenas noches'
+})
+const attention = computed(() => {
+  const r = report.value
+  if (!r) return ''
+  const parts = [`${int(r.upcoming.in30)} ${r.upcoming.in30 === 1 ? 'renovación vence' : 'renovaciones vencen'} en los próximos 30 días`]
+  if (r.kpis.pendingCommissions.count) parts.push(`${eur(r.kpis.pendingCommissions.value)} en comisiones por aprobar`)
+  return parts.join(' y ') + '.'
+})
+const trendCounts = computed(() => report.value?.monthly.map((m) => m.valid) ?? [])
+const trendWeekly = computed(() => report.value?.weekly.map((w) => w.count) ?? [])
+const trendHealth = computed(() => report.value?.renewalHealth.map((m) => m.rate ?? 0) ?? [])
 </script>
 
 <template>
-  <div class="shell" :class="{ 'nav-open': navOpen }">
-    <aside class="side">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">sv</span>
-        <span class="brand-name">Seguimiento<br /><small>de ventas</small></span>
+  <div class="app">
+    <header class="topbar">
+      <div class="logo">
+        <span class="logo-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M5 19V9l7-4 7 4v10h-5v-6h-4v6z" fill="currentColor" /></svg></span>
+        <span>Seguimiento</span>
       </div>
-      <nav aria-label="Secciones">
-        <p class="nav-group">Menú</p>
-        <button
-          v-for="n in NAV"
-          :key="n.key"
-          type="button"
-          class="nav-item"
-          :class="{ on: tab === n.key }"
-          :aria-current="tab === n.key ? 'page' : undefined"
-          @click="go(n.key)"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" v-html="n.icon" />
-          {{ n.label }}
-        </button>
+      <nav class="tabs" aria-label="Secciones">
+        <button v-for="t in TABS" :key="t.key" type="button" :class="{ on: tab === t.key }" :aria-current="tab === t.key ? 'page' : undefined" @click="go(t.key)">{{ t.label }}</button>
       </nav>
-      <div class="side-foot">
-        <div class="sync-card">
-          <p class="sync-title">Tradedoubler</p>
-          <p class="sync-sub">Última sincronización<br /><b>{{ summary?.lastSyncAt ? dayLabel(summary.lastSyncAt) : 'nunca' }}</b></p>
-          <button class="btn btn-primary btn-block" type="button" :disabled="busy" @click="sync">{{ busy ? 'Sincronizando…' : 'Sincronizar ahora' }}</button>
-        </div>
-        <label class="token">
-          <span>Token de administración</span>
-          <input v-model="token" class="input" type="password" autocomplete="off" placeholder="x-admin-token" />
-        </label>
-      </div>
-    </aside>
-    <button class="scrim" type="button" aria-label="Cerrar menú" @click="navOpen = false" />
-
-    <div class="main">
-      <header class="top">
-        <button class="btn btn-icon menu-btn" type="button" aria-label="Abrir menú" @click="navOpen = true">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+      <div class="top-icons">
+        <button class="round-btn" type="button" :disabled="busy" :aria-label="busy ? 'Sincronizando' : 'Sincronizar con Tradedoubler'" :title="busy ? 'Sincronizando…' : 'Sincronizar con Tradedoubler'" @click="sync">
+          <svg :class="{ spin: busy }" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
         </button>
-        <div class="top-title">
-          <h1>{{ TITLES[tab] }}</h1>
-          <p v-if="tab === 'dashboard'" class="sub">Ventas de afiliados, renovaciones y comisiones</p>
+        <button class="round-btn" type="button" :aria-label="themeLabel" :title="themeLabel" @click="cycleTheme">
+          <svg v-if="theme === 'dark'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
+          <svg v-else-if="theme === 'light'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+          <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
+        </button>
+        <button class="round-btn" type="button" aria-label="Ajustes y token" title="Ajustes y token" @click="go('settings')">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="main">
+      <div v-if="tab === 'dashboard'" class="hello">
+        <div class="hello-text">
+          <h1>{{ greeting }}</h1>
+          <p v-if="attention">{{ attention }}</p>
         </div>
-        <div class="top-actions">
-          <div v-if="tab === 'dashboard'" class="seg" role="group" aria-label="Periodo">
-            <button v-for="p in PERIODS" :key="p.key" type="button" :class="{ on: period === p.key }" @click="period = p.key">{{ p.label }}</button>
-          </div>
-          <button class="btn btn-icon" type="button" :aria-label="themeLabel" :title="themeLabel" @click="cycleTheme">
-            <svg v-if="theme === 'dark'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
-            <svg v-else-if="theme === 'light'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
-            <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
-          </button>
+        <div v-if="report" class="chips">
+          <PanelKpiChip :value="int(report.kpis.sales.value)" label="Ventas válidas" :delta="report.kpis.sales.delta" :trend="trendCounts" />
+          <PanelKpiChip :value="int(report.kpis.pendingRenewals.value)" label="Renovaciones pendientes" :trend="trendWeekly" />
+          <PanelKpiChip
+            :value="report.kpis.renewalRate.value == null ? '—' : `${Math.round(report.kpis.renewalRate.value)} %`"
+            label="Tasa de renovación"
+            :trend="trendHealth"
+          />
         </div>
-      </header>
+      </div>
+      <h1 v-else class="page-title">{{ TITLES[tab] }}</h1>
 
       <p v-if="message" class="notice" role="status">{{ message }}</p>
-      <p v-if="unauthorized" class="notice notice-err" role="alert">El token no es válido o falta. Escríbelo en el menú lateral, en «Token de administración».</p>
+      <p v-if="unauthorized" class="notice notice-err" role="alert">
+        El token no es válido o falta. Escríbelo en <button class="link" type="button" @click="go('settings')">Ajustes</button>.
+      </p>
 
-      <ViewDashboard v-if="tab === 'dashboard'" :report="report" @go="go" />
+      <ViewDashboard v-if="tab === 'dashboard'" v-model:period="period" :report="report" @go="go" />
       <ViewSales v-else-if="tab === 'sales'" :key="`s${viewKey}`" />
       <ViewAffiliates v-else-if="tab === 'affiliates'" :key="`a${viewKey}`" @message="message = $event" @changed="refreshAll" />
-      <ViewCommissions v-else :key="`c${viewKey}`" @message="message = $event" @changed="refreshAll" />
-    </div>
+      <ViewCommissions v-else-if="tab === 'commissions'" :key="`c${viewKey}`" @message="message = $event" @changed="refreshAll" />
+      <ViewSettings v-else :last-sync-at="summary?.lastSyncAt" :busy="busy" @sync="sync" />
+    </main>
   </div>
 </template>
