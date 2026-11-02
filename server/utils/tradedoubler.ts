@@ -165,7 +165,14 @@ export class TradedoublerClient {
         }
       }
     }
-    return out
+    // Este endpoint no filtra por sourceId: la misma transacción llega una vez por fuente.
+    const seen = new Set<string>()
+    return out.filter((it: any) => {
+      const id = String(it?.transactionId ?? '')
+      if (!id || seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
   }
 
   private async fetchChunk(sourceId: string, from: Date, to: Date): Promise<TdTransaction[]> {

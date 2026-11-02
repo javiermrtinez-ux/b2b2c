@@ -68,8 +68,16 @@ const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : n
  * extra que solo da ese endpoint. No crea ventas nuevas (eso es de /latest) ni guarda datos personales.
  */
 export function applyHistory(db: DatabaseSync, items: unknown[], now = new Date()): number {
+  // El histórico usa otros IDs de transacción que /latest y solo trae las válidas, así que se cruza por
+  // nº de pedido: primero con la fecha exacta (la venta válida de ese pedido a ese segundo) y, si no, con la
+  // única venta válida del pedido. Si nada casa con seguridad, no se toca ninguna venta.
+  const byId = db.prepare('SELECT transaction_id FROM sales WHERE transaction_id = ?')
+  const byOrderTime = db.prepare(
+    "SELECT transaction_id FROM sales WHERE order_number = ? AND valid = 1 AND substr(occurred_at, 1, 19) = ?"
+  )
+  const byOrder = db.prepare('SELECT transaction_id FROM sales WHERE order_number = ? AND valid = 1')
   const update = db.prepare(`
-    UPDATE sales SET td_status = ?, td_paid = ?, td_commission = ?, td_total_commission = ?, td_checked_at = ?,
+    UPDATE sales SET td_status = ?, td_paid = ?, td_commission = ?, td_total_commission = ?, td_checked_at = ?, td_history_id = ?,
       extra = CASE WHEN ? IS NULL THEN extra ELSE json_patch(COALESCE(extra, '{}'), ?) END
     WHERE transaction_id = ?
   `)
@@ -79,6 +87,8 @@ export function applyHistory(db: DatabaseSync, items: unknown[], now = new Date(
     for (const raw of items) {
       const it = raw as Record<string, unknown>
       if (!it || it.transactionId == null) continue
+      const target = matchSale(it, byId, byOrderTime, byOrder)
+      if (!target) continue
       const extra = extractExtra(it, 'history')
       const res = update.run(
         normalizeTdStatus(it.status),
@@ -86,9 +96,10 @@ export function applyHistory(db: DatabaseSync, items: unknown[], now = new Date(
         num(it.commission),
         num(it.totalCommission),
         now.toISOString(),
+        String(it.transactionId),
         extra,
         extra,
-        String(it.transactionId)
+        target
       )
       n += Number(res.changes)
     }
@@ -98,6 +109,28 @@ export function applyHistory(db: DatabaseSync, items: unknown[], now = new Date(
     throw e
   }
   return n
+}
+
+/** Fecha de Tradedoubler («2026-10-09T13:57:20+0200») a UTC hasta el segundo («2026-10-09T11:57:20»). */
+export function tdTimeToUtc(v: unknown): string | null {
+  if (typeof v !== 'string' || !v) return null
+  const d = new Date(v.replace(/([+-]\d{2})(\d{2})$/, '$1:$2'))
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 19)
+}
+
+type Stmt = { get: (...a: any[]) => unknown; all: (...a: any[]) => unknown[] }
+function matchSale(it: Record<string, unknown>, byId: Stmt, byOrderTime: Stmt, byOrder: Stmt): string | null {
+  const id = byId.get(String(it.transactionId)) as { transaction_id: string } | undefined
+  if (id) return id.transaction_id
+  const order = it.orderNumber != null && it.orderNumber !== '' ? String(it.orderNumber) : null
+  if (!order) return null
+  const time = tdTimeToUtc(it.timeOfTransaction ?? it.timeOfCreate)
+  if (time) {
+    const rows = byOrderTime.all(order, time) as Array<{ transaction_id: string }>
+    if (rows.length === 1) return rows[0].transaction_id
+  }
+  const rows = byOrder.all(order) as Array<{ transaction_id: string }>
+  return rows.length === 1 ? rows[0].transaction_id : null
 }
 
 /**

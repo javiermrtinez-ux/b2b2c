@@ -151,3 +151,36 @@ test('initSchema añade columnas nuevas a una base existente sin perder ventas',
   assert.equal((d.prepare('SELECT COUNT(*) AS n FROM sales').get() as any).n, 1)
   assert.ok(d.prepare("SELECT 1 FROM sqlite_master WHERE name = 'renewal_checks'").get())
 })
+
+test('el histórico casa por nº de pedido y hora (sus IDs no son los de /latest) y solo con la venta válida', () => {
+  const d = db()
+  const sale = (id: string, order: string, ts: string, valid: boolean) =>
+    item(id, { rxNumber: order, timestamp: ts, valid, orderValue: 5.79 })
+  saveTransactions(
+    d,
+    [
+      sale('6330392061721108011', '4R3ANNW60QY', '2026-10-09T12:31:28Z', false),
+      sale('6357413659531000455', '4R3ANNW60QY', '2026-10-09T12:31:28Z', true),
+      sale('6339399261116320761', '4R3ANNW60QY', '2026-10-09T12:31:55Z', false),
+      sale('6312377666274735527', '4R3A2TUY48E', '2026-10-09T12:43:32Z', true),
+      sale('6339399264064795482', '4R3A2TUY48E', '2026-10-09T12:43:31Z', false)
+    ] as any,
+    365
+  )
+  const n = applyHistory(d, [
+    { transactionId: '79698943885', orderNumber: '4R3ANNW60QY', timeOfTransaction: '2026-10-09T14:31:28+0200', status: 'A', commission: 0.58 },
+    // Hora distinta: casa por ser la única válida del pedido.
+    { transactionId: '79699079357', orderNumber: '4R3A2TUY48E', timeOfTransaction: '2026-10-09T14:50:00+0200', status: 'P', commission: 0.3 },
+    // Pedido desconocido: no toca nada.
+    { transactionId: '1', orderNumber: 'NO-EXISTE', status: 'A', commission: 9 }
+  ])
+  assert.equal(n, 2)
+  const rows = d.prepare('SELECT transaction_id, td_status, td_commission, td_history_id FROM sales WHERE td_status IS NOT NULL ORDER BY transaction_id').all() as any[]
+  assert.deepEqual(
+    rows.map((r) => [r.transaction_id, r.td_status, r.td_commission, r.td_history_id]),
+    [
+      ['6312377666274735527', 'pending', 0.3, '79699079357'],
+      ['6357413659531000455', 'accepted', 0.58, '79698943885']
+    ]
+  )
+})

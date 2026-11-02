@@ -100,7 +100,8 @@ export function initSchema(db: DatabaseSync): void {
     ['td_paid', 'INTEGER'],
     ['td_commission', 'REAL'],
     ['td_total_commission', 'REAL'],
-    ['td_checked_at', 'TEXT']
+    ['td_checked_at', 'TEXT'],
+    ['td_history_id', 'TEXT']
   ]
   for (const [name, type] of add) if (!cols.has(name)) db.exec(`ALTER TABLE sales ADD COLUMN ${name} ${type}`)
 }
