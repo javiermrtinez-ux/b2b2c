@@ -1,5 +1,8 @@
 import { kvGet, kvSet } from './db'
 import { splitRange, toYmd } from './dates'
+import { TdHttpError, normalizePage, obtainToken, type TdToken, type TdTransaction } from './tradedoubler-core'
+
+export type { TdTransaction } from './tradedoubler-core'
 
 const BASE = 'https://connect.tradedoubler.com'
 
@@ -7,22 +10,11 @@ export interface TdConfig {
   clientId: string
   clientSecret: string
   refreshToken: string
+  username: string
+  password: string
   sourceId: string
   programId: string
   eventTypeIds: string
-}
-
-export interface TdTransaction {
-  transactionId: number
-  timestamp: string
-  programId: number
-  programName: string
-  publisherOrganizationId: number
-  publisherOrganizationName: string | null
-  rxNumber: string | null
-  orderValue: number | null
-  eventTypeId: number
-  valid: boolean
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -47,18 +39,17 @@ export class TradedoublerClient {
       },
       body
     })
-    if (!res.ok) throw new Error(`Tradedoubler auth falló (${res.status})`)
-    return (await res.json()) as { access_token: string; refresh_token?: string; expires_in: number }
+    if (!res.ok) throw new TdHttpError(`Tradedoubler auth falló (${res.status})`, res.status)
+    return (await res.json()) as TdToken
   }
 
   private async refresh(): Promise<void> {
-    const stored = kvGet('td_refresh_token') || this.cfg.refreshToken
-    const body = stored
-      ? new URLSearchParams({ grant_type: 'refresh_token', refresh_token: stored })
-      : new URLSearchParams({ grant_type: 'client_credentials' })
-    const t = await this.tokenRequest(body)
-    // Guardar el refresh token nuevo ANTES de usar el access token: el anterior ya está gastado.
-    if (t.refresh_token) kvSet('td_refresh_token', t.refresh_token)
+    const t = await obtainToken(
+      this.cfg,
+      kvGet('td_refresh_token'),
+      (body) => this.tokenRequest(body),
+      (rt) => kvSet('td_refresh_token', rt)
+    )
     this.accessToken = t.access_token
     this.expiresAt = Date.now() + (t.expires_in - 60) * 1000
   }
@@ -90,28 +81,32 @@ export class TradedoublerClient {
       this.accessToken = ''
       return this.get<T>(path, params, true)
     }
-    if (!res.ok) throw new Error(`Tradedoubler ${path} falló (${res.status})`)
+    if (!res.ok) throw new TdHttpError(`Tradedoubler ${path} falló (${res.status})`, res.status)
     return (await res.json()) as T
   }
 
   /** Todas las transacciones del rango, en tramos de 60 días y paginadas de 100 en 100. */
   async fetchTransactions(from: Date, to: Date): Promise<TdTransaction[]> {
-    if (!this.cfg.sourceId) throw new Error('Falta TD_SOURCE_ID')
+    if (!this.cfg.sourceId) throw new Error('Falta NUXT_TD_SOURCE_ID')
     const out: TdTransaction[] = []
     for (const chunk of splitRange(from, to)) {
       let offset = 0
       for (;;) {
-        const page = await this.get<{ total: number; items: TdTransaction[] }>('/network/transactions/latest', {
-          sourceId: this.cfg.sourceId,
-          fromDate: toYmd(chunk.from),
-          toDate: toYmd(chunk.to),
-          programId: this.cfg.programId,
-          eventTypeIds: this.cfg.eventTypeIds,
-          limit: 100,
-          offset,
-          sortBy: 'transactionId',
-          sortOrder: 'asc'
-        })
+        const page = normalizePage(
+          await this.get<unknown>('/network/transactions/latest', {
+            sourceId: this.cfg.sourceId,
+            fromDate: toYmd(chunk.from),
+            toDate: toYmd(chunk.to),
+            programId: this.cfg.programId,
+            eventTypeIds: this.cfg.eventTypeIds,
+            // Sin esto la API omite las invalidadas y nunca veríamos una venta pasar a inválida.
+            includeInvalidTransactions: 'true',
+            limit: 100,
+            offset,
+            sortBy: 'transactionId',
+            sortOrder: 'asc'
+          })
+        )
         out.push(...page.items)
         offset += page.items.length
         if (!page.items.length || offset >= page.total) break

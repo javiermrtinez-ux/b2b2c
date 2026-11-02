@@ -1,12 +1,20 @@
 import { mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 let db: DatabaseSync | undefined
 
 export function getDb(): DatabaseSync {
   if (db) return db
-  mkdirSync('data', { recursive: true })
-  db = new DatabaseSync('data/ventas.sqlite')
+  // DB_PATH permite sincronizar contra una base nueva o una copia sin tocar la de siempre.
+  const path = process.env.DB_PATH || 'data/ventas.sqlite'
+  mkdirSync(dirname(path), { recursive: true })
+  db = new DatabaseSync(path)
+  initSchema(db)
+  return db
+}
+
+export function initSchema(db: DatabaseSync): void {
   db.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -43,7 +51,6 @@ export function getDb(): DatabaseSync {
       created_at TEXT NOT NULL
     );
   `)
-  return db
 }
 
 export function kvGet(key: string): string | undefined {

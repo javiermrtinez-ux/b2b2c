@@ -1,7 +1,7 @@
 import { getDb, kvGet, kvSet } from './db'
-import { addDays } from './dates'
 import { computeCommission, type CommissionType } from './commission'
 import { getPartner } from './partner'
+import { saveTransactions } from './sales-store'
 import { TradedoublerClient, type TdTransaction } from './tradedoubler'
 
 type Config = ReturnType<typeof useRuntimeConfig>
@@ -36,40 +36,7 @@ export async function syncSales(config: Config) {
     ? await new TradedoublerClient(config.td).fetchTransactions(from, now)
     : sampleTransactions(defaultFrom)
 
-  const upsertAffiliate = db.prepare(
-    'INSERT INTO affiliates (id, name) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET name = COALESCE(excluded.name, name)'
-  )
-  const upsertSale = db.prepare(`
-    INSERT INTO sales (transaction_id, occurred_at, program_id, program_name, affiliate_id, order_number, order_value, valid, renewal_due_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(transaction_id) DO UPDATE SET valid = excluded.valid, order_value = excluded.order_value
-  `)
-
-  let imported = 0
-  db.exec('BEGIN')
-  try {
-    for (const t of txs) {
-      // Solo cuentan como venta los eventos con importe de pedido.
-      if (t.orderValue == null) continue
-      upsertAffiliate.run(t.publisherOrganizationId, t.publisherOrganizationName)
-      upsertSale.run(
-        t.transactionId,
-        new Date(t.timestamp).toISOString(),
-        t.programId,
-        t.programName,
-        t.publisherOrganizationId,
-        t.rxNumber,
-        t.orderValue,
-        t.valid ? 1 : 0,
-        addDays(new Date(t.timestamp).toISOString(), config.renewalDays)
-      )
-      imported++
-    }
-    db.exec('COMMIT')
-  } catch (e) {
-    db.exec('ROLLBACK')
-    throw e
-  }
+  const imported = saveTransactions(db, txs, config.renewalDays)
   kvSet('last_sync_at', now.toISOString())
   return { imported, mode: useReal ? 'tradedoubler' : 'demo' }
 }
