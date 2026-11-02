@@ -9,13 +9,16 @@ const rows = computed(() => {
   const all = affiliates.value || []
   if (!term) return all
   return all.filter((a) =>
-    [a.name, a.id, ...a.programs.flatMap((p: any) => [p.id, p.name]), ...a.sources.flatMap((s: any) => [s.url, s.name])]
+    [a.name, a.id, ...a.programs.flatMap((p: any) => [p.id, p.name]), ...a.sources.flatMap((s: any) => [s.url, s.name, s.country])]
       .some((v) => String(v ?? '').toLowerCase().includes(term))
   )
 })
 
 // Solo enlaces http(s): la URL viene de Tradedoubler y no debe poder ejecutar nada.
 const safeUrl = (u: string | null) => (u && /^https?:\/\//i.test(u) ? u : null)
+
+// País del afiliado: el de sus webs según Tradedoubler (sin repetir).
+const countries = (a: any): string[] => [...new Set<string>(a.sources.map((w: any) => w.country).filter(Boolean))]
 
 async function saveRule(a: any) {
   try {
@@ -37,13 +40,13 @@ async function saveRule(a: any) {
     </header>
     <div class="table-wrap">
       <table class="table aff-table">
-        <thead><tr><th>Affiliate ID</th><th>Nombre</th><th>Program ID</th><th>URL</th><th class="num">Ventas</th><th class="num">Comisión TD</th><th class="num">Comisión renovación</th><th>Regla de comisión</th></tr></thead>
+        <thead><tr><th>Affiliate ID</th><th>Nombre</th><th>Program ID</th><th>URL</th><th>País</th><th class="num">Ventas</th><th class="num">Comisión TD</th><th class="num">Comisión renovación</th><th>Regla de comisión</th></tr></thead>
         <tbody>
           <tr v-for="a in rows" :key="a.id">
             <td class="mono">{{ a.id }}</td>
             <td><b>{{ a.name || '—' }}</b></td>
             <td class="cell-list">
-              <span v-for="p in a.programs" :key="p.id" :title="p.name"><span class="mono">{{ p.id }}</span><small class="muted block">{{ p.name }}</small></span>
+              <span v-for="p in a.programs" :key="p.id" :title="p.name"><span class="mono">{{ p.id }}</span><small class="muted block">{{ p.name }}{{ p.country ? ` · ${p.country}` : '' }}</small></span>
               <span v-if="!a.programs.length" class="muted">—</span>
             </td>
             <td class="cell-list">
@@ -52,6 +55,10 @@ async function saveRule(a: any) {
                 <span v-else class="muted">{{ w.name || `Web ${w.id}` }} (sin URL)</span>
               </span>
               <span v-if="!a.sources.length" class="muted">—</span>
+            </td>
+            <td class="cell-list country-cell">
+              <span v-for="c in countries(a)" :key="c" class="mono">{{ c }}</span>
+              <span v-if="!countries(a).length" class="muted">—</span>
             </td>
             <td class="num">{{ int(a.sales) }}</td>
             <td class="num">{{ eur(a.td_commissions) }}</td>
@@ -67,7 +74,7 @@ async function saveRule(a: any) {
               </div>
             </td>
           </tr>
-          <tr v-if="affiliates && !rows.length"><td colspan="8" class="empty-line">No hay afiliados que coincidan.</td></tr>
+          <tr v-if="affiliates && !rows.length"><td colspan="9" class="empty-line">No hay afiliados que coincidan.</td></tr>
         </tbody>
       </table>
     </div>

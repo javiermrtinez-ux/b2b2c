@@ -24,6 +24,8 @@ export interface FieldDef {
   personal?: boolean
   /** Se puede ofrecer como filtro (pocos valores distintos). */
   canFilter?: boolean
+  /** Sale como columna en Ventas mientras no se cambie en el Glosario. */
+  defaultVisible?: boolean
 }
 
 export const GROUPS = ['Venta', 'Afiliado y web', 'Anuncio y evento', 'Dispositivo', 'Estado y comisión', 'Producto y cupón', 'Fechas', 'Programa', 'Datos personales']
@@ -35,6 +37,7 @@ export const FIELDS: FieldDef[] = [
   { key: 'rxNumber', path: 'rxNumber', label: 'Nº de pedido', description: 'Número de pedido de la tienda. Solo viene en ventas, no en clics o leads.', group: 'Venta', source: 'latest', type: 'text', column: 'order_number' },
   { key: 'orderValue', path: 'orderValue', label: 'Importe', description: 'Importe del pedido. Solo viene en ventas.', group: 'Venta', source: 'latest', type: 'number', column: 'order_value' },
   { key: 'valid', path: 'valid', label: 'Válida', description: 'Si Tradedoubler la da por válida o la ha anulado.', group: 'Venta', source: 'latest', type: 'bool', column: 'valid' },
+  { key: 'ipCountry', path: 'ipCountry', label: 'País del comprador', description: 'Código de país de la compra, según la IP. Solo se guarda el país, nunca la IP ni la ciudad.', group: 'Venta', source: 'latest', type: 'text', canFilter: true, defaultVisible: true },
   { key: 'guid', path: 'guid', label: 'GUID', description: 'Identificador interno del evento en Tradedoubler.', group: 'Venta', source: 'latest', type: 'text' },
   // Programa
   { key: 'programId', path: 'programId', label: 'ID de programa', description: 'Programa de afiliación de la venta.', group: 'Programa', source: 'latest', type: 'number', column: 'program_id' },
@@ -88,7 +91,6 @@ export const FIELDS: FieldDef[] = [
   { key: 'ipAddress', path: 'ipAddress', label: 'IP del comprador', description: 'Dato personal. No se guarda.', group: 'Datos personales', source: 'latest', type: 'text', personal: true },
   { key: 'ipCity', path: 'ipCity', label: 'Ciudad (por IP)', description: 'Dato personal. No se guarda.', group: 'Datos personales', source: 'latest', type: 'text', personal: true },
   { key: 'ipIsp', path: 'ipIsp', label: 'Proveedor de internet', description: 'Dato personal. No se guarda.', group: 'Datos personales', source: 'latest', type: 'text', personal: true },
-  { key: 'ipCountry', path: 'ipCountry', label: 'País (por IP)', description: 'Dato del comprador. No se guarda.', group: 'Datos personales', source: 'latest', type: 'text', personal: true },
   { key: 'userAgent', path: 'userAgent', label: 'User agent', description: 'Huella del navegador del comprador. No se guarda.', group: 'Datos personales', source: 'latest', type: 'text', personal: true },
   { key: 'referrerUrl', path: 'referrerUrl', label: 'Página de origen', description: 'URL desde la que llegó el comprador; puede contener datos personales. No se guarda.', group: 'Datos personales', source: 'latest', type: 'text', personal: true }
 ]
@@ -135,7 +137,7 @@ export function getGlossary(db: DatabaseSync): GlossaryRow[] {
   return FIELDS.map((f) => {
     const o = overrides.get(f.key)
     // Las de fuentes se guardan aparte, en la tabla sources (URL y datos de la web del afiliado).
-    const stored = Boolean(f.column) || STORED_EXTRA.includes(f) || f.key === 'publisherOrganizationName' || f.source === 'sources'
+    const stored = Boolean(f.column) || STORED_EXTRA.includes(f) || f.key === 'publisherOrganizationName' || f.source === 'sources' || f.key === 'programCountry' || f.key === 'programActive'
     const extra = STORED_EXTRA.includes(f)
     return {
       ...f,
@@ -144,7 +146,7 @@ export function getGlossary(db: DatabaseSync): GlossaryRow[] {
       defaultLabel: f.label,
       defaultDescription: f.description,
       stored,
-      visible: extra ? Boolean(o?.visible ?? 0) : stored && !f.personal,
+      visible: extra ? Boolean(o?.visible ?? (f.defaultVisible ? 1 : 0)) : stored && !f.personal,
       filterable: extra && Boolean(f.canFilter) ? Boolean(o?.filterable ?? 1) : false
     }
   })

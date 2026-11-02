@@ -1,7 +1,7 @@
 import { getDb, kvGet, kvSet } from './db'
 import { computeCommission, type CommissionType } from './commission'
 import { getPartner } from './partner'
-import { applyHistory, saveSources, saveTransactions } from './sales-store'
+import { applyHistory, savePrograms, saveSources, saveTransactions } from './sales-store'
 import { syncWindowStart } from './dates'
 import { TradedoublerClient, type TdTransaction } from './tradedoubler'
 
@@ -23,6 +23,7 @@ function sampleTransactions(from: Date): TdTransaction[] {
     valid: true,
     // Campos extra de ejemplo para probar el glosario y los filtros.
     eventName: 'Venta',
+    ipCountry: ['ES', 'ES', 'PT'][i % 3],
     eventTypeName: 'Sale',
     sourceId: 2000 + (i % 3),
     sourceName: ['Blog Norte', 'Comparador Sur', 'Cupones Este'][i % 3],
@@ -85,8 +86,14 @@ export async function syncSales(config: Config) {
   } catch (e) {
     sources = { error: (e as Error).message }
   }
+  let programs: { saved: number } | { error: string }
+  try {
+    programs = { saved: savePrograms(db, client ? await client.fetchPrograms() : [{ id: 1, name: 'Programa demo', countryCode: 'ES', active: true }]) }
+  } catch (e) {
+    programs = { error: (e as Error).message }
+  }
   kvSet('last_sync_at', now.toISOString())
-  return { imported, history, sources, mode: useReal ? 'tradedoubler' : 'demo' }
+  return { imported, history, sources, programs, mode: useReal ? 'tradedoubler' : 'demo' }
 }
 
 /** Crea las comisiones de ventas ya renovadas que no la tienen (p. ej. tras configurar la regla del afiliado). */

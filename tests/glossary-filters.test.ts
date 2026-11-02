@@ -23,6 +23,7 @@ const item = (id: string, over: Record<string, unknown> = {}) => ({
   device: { dvClass: 'Desktop', osName: 'Windows' },
   ipAddress: '203.0.113.9',
   ipCity: 'Madrid',
+  ipCountry: 'ES',
   userAgent: 'Mozilla/5.0',
   referrerUrl: 'https://example.com/?email=a@b.c',
   ...over
@@ -38,6 +39,7 @@ test('extractExtra guarda los campos permitidos y nunca los datos personales', (
   const extra = JSON.parse(extractExtra(item('1'))!)
   assert.equal(extra.deviceClass, 'Desktop')
   assert.equal(extra.sourceName, 'Blog')
+  assert.equal(extra.ipCountry, 'ES')
   for (const f of FIELDS.filter((x) => x.personal)) assert.equal(extra[f.key], undefined, f.key)
   assert.ok(!JSON.stringify(extra).includes('203.0.113.9'))
   // Del histórico solo salen sus campos (la ciudad del dispositivo extendido no se guarda).

@@ -105,6 +105,18 @@ export class TradedoublerClient {
     return out
   }
 
+  /** Programas de la red, con su país. Solo lectura. */
+  async fetchPrograms(): Promise<unknown[]> {
+    const out: unknown[] = []
+    for (let offset = 0; ; ) {
+      const page = normalizePage(await this.get<unknown>('/network/programs', { limit: 100, offset }))
+      out.push(...page.items)
+      offset += page.items.length
+      if (!page.items.length || offset >= page.total) break
+    }
+    return out
+  }
+
   /** Fuentes a consultar: las de NUXT_TD_SOURCE_ID o, si está vacío, todas las de la red. */
   private async sourceIds(): Promise<string[]> {
     const configured = parseIdList(this.cfg.sourceId)

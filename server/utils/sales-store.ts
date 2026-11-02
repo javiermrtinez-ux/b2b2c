@@ -129,3 +129,34 @@ export function saveSources(db: DatabaseSync, items: unknown[], now = new Date()
   }
   return n
 }
+
+/** Guarda los programas de la red (/network/programs): nombre, país y si está activo. */
+export function savePrograms(db: DatabaseSync, items: unknown[], now = new Date()): number {
+  const up = db.prepare(`
+    INSERT INTO programs (id, name, country_code, active, synced_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET name = excluded.name, country_code = excluded.country_code, active = excluded.active,
+      synced_at = excluded.synced_at
+  `)
+  let n = 0
+  db.exec('BEGIN')
+  try {
+    for (const raw of items) {
+      const it = raw as Record<string, unknown>
+      const id = Number(it?.id)
+      if (!Number.isInteger(id)) continue
+      up.run(
+        id,
+        typeof it.name === 'string' ? it.name.slice(0, 200) : null,
+        typeof it.countryCode === 'string' ? it.countryCode.slice(0, 8) : null,
+        typeof it.active === 'boolean' ? (it.active ? 1 : 0) : null,
+        now.toISOString()
+      )
+      n++
+    }
+    db.exec('COMMIT')
+  } catch (e) {
+    db.exec('ROLLBACK')
+    throw e
+  }
+  return n
+}

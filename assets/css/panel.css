@@ -378,3 +378,4 @@ button, input, select { font: inherit; color: inherit; }
   .aff-table .rule { flex-wrap: wrap; }
   .aff-table .rule select { max-width: none; flex: 1 1 100%; }
 }
+.aff-table td.country-cell { min-width: 0; }

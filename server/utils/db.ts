@@ -73,6 +73,14 @@ export function initSchema(db: DatabaseSync): void {
       synced_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_sources_org ON sources (publisher_org_id);
+    -- Programas de la red (/network/programs): país y si está activo.
+    CREATE TABLE IF NOT EXISTS programs (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      country_code TEXT,
+      active INTEGER,
+      synced_at TEXT NOT NULL
+    );
     -- Cambios del glosario hechos desde el panel (null = valor por defecto).
     CREATE TABLE IF NOT EXISTS glossary (
       key TEXT PRIMARY KEY,
