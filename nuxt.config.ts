@@ -1,6 +1,7 @@
 export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
   devtools: { enabled: false },
+  css: ['~/assets/css/panel.css'],
   nitro: {
     experimental: { tasks: true },
     scheduledTasks: { '0 */6 * * *': ['sync'] }
