@@ -4,6 +4,7 @@ import { eur, int } from '~/utils/format'
 const emit = defineEmits<{ message: [text: string]; changed: [] }>()
 const { data: affiliates, refresh } = useApi<any[]>('/api/affiliates')
 const q = ref('')
+const selected = ref<number | null>(null)
 const rows = computed(() => {
   const term = q.value.trim().toLowerCase()
   const all = affiliates.value || []
@@ -33,16 +34,17 @@ async function saveRule(a: any) {
 </script>
 
 <template>
+  <div class="sales-layout">
   <section class="card">
     <header class="card-head">
-      <div><h2>Afiliados</h2><p class="sub">Regla para calcular la comisión cuando se confirma la renovación: % sobre la renovación o importe fijo</p></div>
+      <div><h2>Afiliados</h2><p class="sub">Pulsa un afiliado para ver su ficha. La regla calcula la comisión cuando se confirma la renovación.</p></div>
       <input v-model="q" class="input" type="search" placeholder="Buscar por nombre, ID o web" aria-label="Buscar afiliado por nombre, ID o web" />
     </header>
     <div class="table-wrap">
       <table class="table aff-table">
         <thead><tr><th>Affiliate ID</th><th>Nombre</th><th>Program ID</th><th>URL</th><th>País</th><th class="num">Ventas</th><th class="num">Comisión TD</th><th class="num">Comisión renovación</th><th>Regla de comisión</th></tr></thead>
         <tbody>
-          <tr v-for="a in rows" :key="a.id">
+          <tr v-for="a in rows" :key="a.id" class="clickable" :class="{ sel: selected === a.id }" tabindex="0" :aria-label="`Ver ficha de ${a.name || a.id}`" @click="selected = a.id" @keydown.enter.self="selected = a.id">
             <td class="mono">{{ a.id }}</td>
             <td><b>{{ a.name || '—' }}</b></td>
             <td class="cell-list">
@@ -63,7 +65,7 @@ async function saveRule(a: any) {
             <td class="num">{{ int(a.sales) }}</td>
             <td class="num">{{ eur(a.td_commissions) }}</td>
             <td class="num">{{ eur(a.commissions) }}</td>
-            <td class="rule-cell">
+            <td class="rule-cell" @click.stop>
               <div class="rule">
                 <select v-model="a.commission_type" class="input" :aria-label="`Tipo de regla de ${a.name || a.id}`">
                   <option value="percent">% renovación</option>
@@ -79,4 +81,6 @@ async function saveRule(a: any) {
       </table>
     </div>
   </section>
+  <PanelAffiliateCard v-if="selected != null" :id="selected" @close="selected = null" />
+  </div>
 </template>

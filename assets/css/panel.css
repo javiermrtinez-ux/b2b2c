@@ -379,3 +379,21 @@ button, input, select { font: inherit; color: inherit; }
   .aff-table .rule select { max-width: none; flex: 1 1 100%; }
 }
 .aff-table td.country-cell { min-width: 0; }
+
+/* Ficha del afiliado */
+.aff-card { display: grid; gap: 10px; align-content: start; }
+.aff-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.aff-stats div { padding: 10px 12px; border-radius: var(--r-sm); background: var(--card-hi); border: 1px solid var(--line); }
+.aff-stats dt { font-size: 12px; color: var(--muted); }
+.aff-stats dd { margin: 2px 0 0; font-size: 18px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.aff-bars { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; height: 80px; align-items: end; }
+.aff-bar { display: grid; grid-template-rows: 1fr auto; height: 100%; align-items: end; text-align: center; }
+.aff-bar i { display: block; border-radius: 4px 4px 2px 2px; background: var(--orange); }
+.aff-bar i.zero { background: var(--spark); }
+.aff-bar small { font-size: 10px; color: var(--faint); margin-top: 3px; }
+.aff-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; font-size: 13px; }
+.aff-list li { display: grid; gap: 1px; }
+.aff-list a { color: var(--text); text-underline-offset: 2px; overflow-wrap: anywhere; font-weight: 500; }
+.kv dt.indent { padding-left: 10px; }
+.drawer { position: fixed; top: 16px; right: 16px; width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; z-index: 30; box-shadow: 0 12px 40px rgba(0, 0, 0, .18); }
+.aff-card .kv, .aff-card .order-sub { margin: 0; }
