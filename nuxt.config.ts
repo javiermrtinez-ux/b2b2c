@@ -18,7 +18,8 @@ export default defineNuxtConfig({
       sourceId: '',
       programId: '',
       eventTypeIds: '',
-      syncFrom: '2025-01-01'
+      syncFrom: '2025-01-01',
+      lookbackDays: 90
     },
     renewalDays: 365,
     partner: {

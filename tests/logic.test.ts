@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { computeCommission } from '../server/utils/commission.ts'
-import { splitRange, toYmd } from '../server/utils/dates.ts'
+import { splitRange, syncWindowStart, toYmd } from '../server/utils/dates.ts'
 
 test('comisión porcentual redondea a céntimos', () => {
   assert.equal(computeCommission({ type: 'percent', value: 12.5 }, 99.99), 12.5)
@@ -33,4 +33,20 @@ test('splitRange: tramos de máx. 60 días, sin huecos ni solapes', () => {
 
 test('splitRange: un solo día', () => {
   assert.equal(splitRange(new Date('2025-03-03'), new Date('2025-03-03')).length, 1)
+})
+
+test('cada sincronización vuelve a revisar 90 días para recoger cambios de estado tardíos', () => {
+  const defaultFrom = new Date('2025-01-01T00:00:00Z')
+  assert.equal(syncWindowStart(null, defaultFrom, 90).toISOString(), defaultFrom.toISOString())
+  assert.equal(
+    syncWindowStart('2026-11-02T00:00:00Z', defaultFrom, 90).toISOString(),
+    '2026-08-04T00:00:00.000Z'
+  )
+  // Nunca antes de la fecha inicial configurada
+  assert.equal(syncWindowStart('2025-02-01T00:00:00Z', defaultFrom, 90).toISOString(), defaultFrom.toISOString())
+  // Valor inválido (p. ej. variable vacía) → 90 días
+  assert.equal(
+    syncWindowStart('2026-11-02T00:00:00Z', defaultFrom, Number('')).toISOString(),
+    '2026-08-04T00:00:00.000Z'
+  )
 })

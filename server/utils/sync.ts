@@ -2,6 +2,7 @@ import { getDb, kvGet, kvSet } from './db'
 import { computeCommission, type CommissionType } from './commission'
 import { getPartner } from './partner'
 import { saveTransactions } from './sales-store'
+import { syncWindowStart } from './dates'
 import { TradedoublerClient, type TdTransaction } from './tradedoubler'
 
 type Config = ReturnType<typeof useRuntimeConfig>
@@ -27,9 +28,9 @@ export async function syncSales(config: Config) {
   const db = getDb()
   const useReal = Boolean(config.td.clientId)
   const defaultFrom = new Date(config.td.syncFrom)
-  // Solapamos 7 días con la última sincronización para recoger cambios de estado (válida/inválida).
-  const last = kvGet('last_sync_at')
-  const from = last ? new Date(new Date(last).getTime() - 7 * 86_400_000) : defaultFrom
+  // Volvemos a revisar los últimos `lookbackDays` días (90 por defecto) para recoger validaciones
+  // y anulaciones que Tradedoubler aplica semanas después de la venta.
+  const from = syncWindowStart(kvGet('last_sync_at'), defaultFrom, Number(config.td.lookbackDays))
   const now = new Date()
 
   const txs = useReal
