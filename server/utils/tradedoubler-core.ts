@@ -1,7 +1,8 @@
 // Lógica pura de la API de Tradedoubler (sin dependencias), para poder probarla con node --test.
 
 export interface TdTransaction {
-  transactionId: number
+  /** Texto: son enteros de 64 bits (~6.3e18) que JSON.parse redondearía. */
+  transactionId: string
   timestamp: string
   programId: number
   programName: string
@@ -66,6 +67,21 @@ export async function obtainToken(
   }
   if (t.refresh_token) save(t.refresh_token)
   return t
+}
+
+/** JSON.parse conservando transactionId tal cual viene en el texto, sin pasar por Number. */
+export function parseTdJson(text: string): unknown {
+  return JSON.parse(text, function (key, value, ctx?: { source?: string }) {
+    return key === 'transactionId' && ctx?.source !== undefined ? ctx.source.replace(/^"|"$/g, '') : value
+  })
+}
+
+/** NUXT_TD_SOURCE_ID admite varias fuentes separadas por comas. */
+export function parseIdList(value: string | number): string[] {
+  return String(value)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 
 /** La documentación describe la respuesta como "array of" {total, items}: aceptamos ambos formatos. */

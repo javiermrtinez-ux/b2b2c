@@ -10,7 +10,7 @@ type Config = ReturnType<typeof useRuntimeConfig>
 function sampleTransactions(from: Date): TdTransaction[] {
   const names = ['Afiliado Norte', 'Afiliado Sur', 'Afiliado Este']
   return Array.from({ length: 30 }, (_, i) => ({
-    transactionId: 900000 + i,
+    transactionId: String(900000 + i),
     timestamp: new Date(from.getTime() + i * 86_400_000 * 3).toISOString(),
     programId: 1,
     programName: 'Programa demo',
@@ -54,7 +54,7 @@ export function backfillCommissions(affiliateId: number): number {
        LEFT JOIN commissions c ON c.transaction_id = s.transaction_id
        WHERE s.affiliate_id = ? AND s.renewal_status = 'renewed' AND c.id IS NULL`
     )
-    .all(affiliateId) as Array<{ transaction_id: number; base: number }>
+    .all(affiliateId) as Array<{ transaction_id: string; base: number }>
   const insert = db.prepare(`
     INSERT OR IGNORE INTO commissions (transaction_id, affiliate_id, base_amount, rule_type, rule_value, amount, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -80,7 +80,7 @@ export async function processRenewals(config: Config) {
        WHERE valid = 1 AND renewal_status IN ('pending','unknown') AND renewal_due_at <= ?`
     )
     .all(new Date().toISOString()) as Array<{
-    transaction_id: number
+    transaction_id: string
     order_number: string | null
     affiliate_id: number
     order_value: number | null

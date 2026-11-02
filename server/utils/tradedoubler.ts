@@ -1,6 +1,14 @@
 import { kvGet, kvSet } from './db'
 import { splitRange, toYmd } from './dates'
-import { TdHttpError, normalizePage, obtainToken, type TdToken, type TdTransaction } from './tradedoubler-core'
+import {
+  TdHttpError,
+  normalizePage,
+  obtainToken,
+  parseIdList,
+  parseTdJson,
+  type TdToken,
+  type TdTransaction
+} from './tradedoubler-core'
 
 export type { TdTransaction } from './tradedoubler-core'
 
@@ -82,35 +90,54 @@ export class TradedoublerClient {
       return this.get<T>(path, params, true)
     }
     if (!res.ok) throw new TdHttpError(`Tradedoubler ${path} falló (${res.status})`, res.status)
-    return (await res.json()) as T
+    return parseTdJson(await res.text()) as T
   }
 
-  /** Todas las transacciones del rango, en tramos de 60 días y paginadas de 100 en 100. */
+  /** Fuentes a consultar: las de NUXT_TD_SOURCE_ID o, si está vacío, todas las de la red. */
+  private async sourceIds(): Promise<string[]> {
+    const configured = parseIdList(this.cfg.sourceId)
+    if (configured.length) return configured
+    const ids: string[] = []
+    for (let offset = 0; ; ) {
+      const page = await this.get<{ total: number; items: Array<{ id: number }> }>('/network/sources', { limit: 100, offset })
+      ids.push(...page.items.map((s) => String(s.id)))
+      offset += page.items.length
+      if (!page.items.length || offset >= page.total) break
+    }
+    return ids
+  }
+
+  /** Todas las transacciones del rango, por fuente, en tramos de 60 días y paginadas de 100 en 100. */
   async fetchTransactions(from: Date, to: Date): Promise<TdTransaction[]> {
-    if (!this.cfg.sourceId) throw new Error('Falta NUXT_TD_SOURCE_ID')
     const out: TdTransaction[] = []
-    for (const chunk of splitRange(from, to)) {
-      let offset = 0
-      for (;;) {
-        const page = normalizePage(
-          await this.get<unknown>('/network/transactions/latest', {
-            sourceId: this.cfg.sourceId,
-            fromDate: toYmd(chunk.from),
-            toDate: toYmd(chunk.to),
-            programId: this.cfg.programId,
-            eventTypeIds: this.cfg.eventTypeIds,
-            // Sin esto la API omite las invalidadas y nunca veríamos una venta pasar a inválida.
-            includeInvalidTransactions: 'true',
-            limit: 100,
-            offset,
-            sortBy: 'transactionId',
-            sortOrder: 'asc'
-          })
-        )
-        out.push(...page.items)
-        offset += page.items.length
-        if (!page.items.length || offset >= page.total) break
-      }
+    for (const sourceId of await this.sourceIds()) {
+      for (const chunk of splitRange(from, to)) out.push(...(await this.fetchChunk(sourceId, chunk.from, chunk.to)))
+    }
+    return out
+  }
+
+  private async fetchChunk(sourceId: string, from: Date, to: Date): Promise<TdTransaction[]> {
+    const out: TdTransaction[] = []
+    let offset = 0
+    for (;;) {
+      const page = normalizePage(
+        await this.get<unknown>('/network/transactions/latest', {
+          sourceId,
+          fromDate: toYmd(from),
+          toDate: toYmd(to),
+          programId: this.cfg.programId,
+          eventTypeIds: this.cfg.eventTypeIds,
+          // Sin esto la API omite las invalidadas y nunca veríamos una venta pasar a inválida.
+          includeInvalidTransactions: 'true',
+          limit: 100,
+          offset,
+          sortBy: 'transactionId',
+          sortOrder: 'asc'
+        })
+      )
+      out.push(...page.items)
+      offset += page.items.length
+      if (!page.items.length || offset >= page.total) break
     }
     return out
   }
