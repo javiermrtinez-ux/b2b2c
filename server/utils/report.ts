@@ -224,6 +224,16 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
     return { month, decided, rate: decided ? Math.round(((h!.renewed ?? 0) / decided) * 1000) / 10 : null }
   })
 
+  // Para la vista en línea con proyección: importe válido de los 12 últimos meses cerrados, sea cual sea el periodo.
+  const trendKeys = monthKeys(now, 13).slice(0, -1)
+  const trendRows = db
+    .prepare(
+      `SELECT substr(occurred_at, 1, 7) AS month, COALESCE(SUM(order_value), 0) AS value FROM sales
+       WHERE valid = 1 AND occurred_at >= ? AND occurred_at < ? GROUP BY month`
+    )
+    .all(monthStart(now, 12).toISOString(), monthStart(now, 0).toISOString()) as Array<{ month: string; value: number }>
+  const trend = trendKeys.map((month) => ({ month, value: round2(trendRows.find((r) => r.month === month)?.value ?? 0) }))
+
   const latest = db
     .prepare(
       `SELECT s.transaction_id, s.occurred_at, s.order_number, s.order_value, s.valid, s.renewal_status, s.program_name,
@@ -244,6 +254,7 @@ export function buildReport(db: DatabaseSync, period: Period, now = new Date()) 
       pendingCommissions: { value: commissions.pending.amount, count: commissions.pending.count }
     },
     monthly,
+    trend,
     byProgram,
     topAffiliates,
     segments,

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Report } from '~/server/utils/report'
 import { dayLabel, eur, int, renewalLabel, renewalTone } from '~/utils/format'
+import { forecast, type Scenario } from '~/utils/forecast'
 
 const props = defineProps<{ report: Report | null | undefined; period: string }>()
 const emit = defineEmits<{ go: [tab: string]; 'update:period': [p: string] }>()
@@ -11,6 +12,24 @@ const PERIODS = [
   { key: '12m', label: 'Últimos 12 meses' }
 ]
 const r = computed(() => props.report)
+
+// «Evolución de ventas» en barras (periodo elegido) o en línea con proyección (12 meses cerrados + 4).
+const chartView = ref<'bars' | 'line'>('bars')
+const scenario = ref<Scenario>('base')
+const SCENARIOS: Array<{ key: Scenario; label: string }> = [
+  { key: 'conservative', label: 'Conservador' },
+  { key: 'base', label: 'Base' },
+  { key: 'optimistic', label: 'Optimista' }
+]
+onMounted(() => {
+  try {
+    const v = localStorage.getItem('chartView')
+    if (v === 'line' || v === 'bars') chartView.value = v
+  } catch {}
+})
+watch(chartView, (v) => { try { localStorage.setItem('chartView', v) } catch {} })
+const fc = computed(() => (r.value ? forecast(r.value.trend.map((t) => t.value), 4, scenario.value) : null))
+const trendTotal = computed(() => (r.value ? r.value.trend.reduce((s, t) => s + t.value, 0) : 0))
 const invalidCount = computed(() => (r.value ? r.value.monthly.reduce((s, m) => s + m.invalid, 0) : 0))
 const dailyTotal = computed(() => (r.value ? r.value.daily.reduce((s, d) => s + d.count, 0) : 0))
 const weeklyTotal = computed(() => (r.value ? r.value.weekly.reduce((s, d) => s + d.count, 0) : 0))
@@ -30,24 +49,68 @@ const tone = (name: string) => (Array.from(String(name)).reduce((h, c) => h + c.
     <section class="card pipeline-card">
       <header class="card-head">
         <h2>Evolución de ventas</h2>
-        <select class="pill-select" :value="period" aria-label="Periodo" @change="emit('update:period', ($event.target as HTMLSelectElement).value)">
-          <option v-for="p in PERIODS" :key="p.key" :value="p.key">{{ p.label }}</option>
-        </select>
+        <div class="head-tools">
+          <div class="seg seg-sm" role="group" aria-label="Tipo de gráfico">
+            <button type="button" :class="{ on: chartView === 'bars' }" :aria-pressed="chartView === 'bars'" @click="chartView = 'bars'">Barras</button>
+            <button type="button" :class="{ on: chartView === 'line' }" :aria-pressed="chartView === 'line'" @click="chartView = 'line'">Línea</button>
+          </div>
+          <select v-if="chartView === 'bars'" class="pill-select" :value="period" aria-label="Periodo" @change="emit('update:period', ($event.target as HTMLSelectElement).value)">
+            <option v-for="p in PERIODS" :key="p.key" :value="p.key">{{ p.label }}</option>
+          </select>
+        </div>
       </header>
-      <div class="pipe-head">
-        <div>
-          <p class="big">{{ eur(r.kpis.revenue.value) }}</p>
-          <p class="risk">
-            <span class="risk-icon" aria-hidden="true">!</span>
-            <b>{{ int(invalidCount) }} {{ invalidCount === 1 ? 'venta anulada' : 'ventas anuladas' }}</b> en el periodo
-          </p>
+
+      <template v-if="chartView === 'bars'">
+        <div class="pipe-head">
+          <div>
+            <p class="big">{{ eur(r.kpis.revenue.value) }}</p>
+            <p class="risk">
+              <span class="risk-icon" aria-hidden="true">!</span>
+              <b>{{ int(invalidCount) }} {{ invalidCount === 1 ? 'venta anulada' : 'ventas anuladas' }}</b> en el periodo
+            </p>
+          </div>
+          <ul class="legend">
+            <li><i class="dot dot-orange" />Válidas</li>
+            <li><i class="dot dot-hatch" />Anuladas</li>
+          </ul>
+        </div>
+        <PanelPipelineChart :rows="r.monthly" />
+      </template>
+
+      <template v-else>
+        <div class="pipe-head">
+          <div>
+            <p class="big">{{ eur(trendTotal) }}</p>
+            <p class="sub">
+              Últimos 12 meses cerrados y proyección de los 4 siguientes
+              <span class="ci-badge">Intervalo 95 %</span>
+            </p>
+          </div>
+          <div class="seg seg-sm" role="group" aria-label="Escenario">
+            <button v-for="sc in SCENARIOS" :key="sc.key" type="button" :class="{ on: scenario === sc.key }" :aria-pressed="scenario === sc.key" @click="scenario = sc.key">{{ sc.label }}</button>
+          </div>
         </div>
         <ul class="legend">
-          <li><i class="dot dot-orange" />Válidas</li>
-          <li><i class="dot dot-hatch" />Anuladas</li>
+          <li><i class="dot dot-orange" />Histórico</li>
+          <li><i class="dash-line" />Proyección</li>
+          <li><i class="dot dot-band" />Intervalo</li>
         </ul>
-      </div>
-      <PanelPipelineChart :rows="r.monthly" />
+        <PanelTrendChart :rows="r.trend" :scenario="scenario" />
+        <footer v-if="fc" class="trend-stats">
+          <div>
+            <span class="stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 6-6 4 4 8-8M15 7h6v6" /></svg></span>
+            <div><small>Proyección próximos 3 meses</small><b>{{ eur(fc.next3) }}</b></div>
+          </div>
+          <div>
+            <span class="stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4" /></svg></span>
+            <div><small>Probabilidad de superar los 3 meses anteriores</small><b class="accent">{{ fc.beatPrev3Pct.toLocaleString('es-ES') }} %</b></div>
+          </div>
+          <div>
+            <span class="stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg></span>
+            <div><small>Tendencia</small><b :class="fc.monthlyTrendPct >= 0 ? 'up' : 'down'">{{ fc.monthlyTrendPct >= 0 ? '+' : '' }}{{ fc.monthlyTrendPct.toLocaleString('es-ES') }} % al mes</b></div>
+          </div>
+        </footer>
+      </template>
     </section>
 
     <section class="card">

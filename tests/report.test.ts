@@ -68,6 +68,9 @@ test('buildReport: indicadores, evolución y desgloses del periodo', () => {
   assert.equal(r.daily.length, 30)
   assert.equal(r.daily.at(-1)!.day, '2026-11-15')
   assert.equal(r.daily.find((d) => d.day === '2026-11-02')!.count, 1)
+  assert.equal(r.trend.length, 12)
+  assert.deepEqual(r.trend.at(-1), { month: '2026-10', value: 50 }) // sin el mes en curso
+  assert.deepEqual(r.trend.find((t) => t.month === '2026-07'), { month: '2026-07', value: 75 })
   assert.equal(r.weekly.length, 12)
   assert.equal(r.weekly[1].count, 1) // vence el 25 de noviembre
   assert.deepEqual(r.renewalHealth.find((h) => h.month === '2026-07'), { month: '2026-07', decided: 1, rate: 100 })
