@@ -14,6 +14,14 @@ watch([status, query], () => { page.value = 0 })
 // Columnas extra: las que el Glosario marca como visibles.
 const { data: glossary } = useApi<{ fields: any[] }>('/api/glossary')
 const extraCols = computed(() => (glossary.value?.fields || []).filter((f) => f.visible && !f.column && f.key !== 'publisherOrganizationName'))
+// Las columnas fijas también usan el nombre del Glosario.
+const lbl = (key: string, fallback: string) => glossary.value?.fields.find((f) => f.key === key)?.label || fallback
+// Tradedoubler puede dar varias transacciones para un mismo pedido: se marca para no confundirlas.
+const perOrder = computed(() => {
+  const m = new Map<string, number>()
+  for (const s of data.value?.items || []) if (s.order_number) m.set(s.order_number, (m.get(s.order_number) || 0) + 1)
+  return m
+})
 const show = (v: unknown) => (v === true ? 'Sí' : v === false ? 'No' : v == null || v === '' ? '—' : String(v))
 
 // Histórico del pedido seleccionado.
@@ -50,7 +58,9 @@ const pages = computed(() => Math.max(1, Math.ceil((data.value?.total ?? 0) / PA
         <table class="table">
           <thead>
             <tr>
-              <th>Fecha</th><th>Afiliado</th><th>Programa</th><th>Pedido</th><th class="num">Importe</th><th class="num">Comisión TD</th><th>Estado TD</th><th>Renueva</th><th>Renovación</th>
+              <th>{{ lbl('timestamp', 'Fecha') }}</th><th>{{ lbl('publisherOrganizationName', 'Afiliado') }}</th><th>{{ lbl('programName', 'Programa') }}</th>
+              <th>{{ lbl('rxNumber', 'Pedido') }}</th><th class="num">{{ lbl('orderValue', 'Importe') }}</th><th class="num">{{ lbl('commission', 'Comisión TD') }}</th>
+              <th>{{ lbl('status', 'Estado TD') }}</th><th>Renueva</th><th>Renovación</th>
               <th v-for="c in extraCols" :key="c.key">{{ c.label }}</th>
             </tr>
           </thead>
@@ -68,7 +78,10 @@ const pages = computed(() => Math.max(1, Math.ceil((data.value?.total ?? 0) / PA
               <td>{{ dayLabel(s.occurred_at) }}</td>
               <td><b>{{ s.affiliate_name || s.affiliate_id }}</b></td>
               <td>{{ s.program_name || '—' }}</td>
-              <td class="mono">{{ s.order_number || '—' }}</td>
+              <td class="mono">
+                {{ s.order_number || '—' }}
+                <span v-if="(perOrder.get(s.order_number) || 0) > 1" class="dup" :title="`${perOrder.get(s.order_number)} transacciones de este pedido en la página`">×{{ perOrder.get(s.order_number) }}</span>
+              </td>
               <td class="num">{{ eur(s.order_value) }}</td>
               <td class="num">{{ s.td_commission == null ? '—' : eur(s.td_commission) }}</td>
               <td><PanelStatusChip v-if="s.td_status" :tone="tdStatusTone[s.td_status]" :label="tdStatusLabel[s.td_status]" /><span v-else class="muted">—</span></td>

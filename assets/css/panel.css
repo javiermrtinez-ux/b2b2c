@@ -356,3 +356,25 @@ button, input, select { font: inherit; color: inherit; }
 .gl-table th:nth-child(4) { width: 8%; } .gl-table th:nth-child(5) { width: 13%; } .gl-table th:nth-child(6) { width: 10%; } .gl-table th:nth-child(7) { width: 8%; }
 .gl-table td.mono { word-break: break-all; }
 @media (max-width: 860px) { .fb-toggle { flex-basis: 100%; justify-content: center; } }
+.dup { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px; background: var(--amber-bg); color: var(--amber); font-size: 11px; font-weight: 600; font-family: inherit; }
+.rule { flex-wrap: wrap; }
+.rule select { max-width: 170px; }
+/* Por debajo de 1180 px el histórico del pedido se abre como panel lateral encima de la tabla. */
+@media (max-width: 1180px) {
+  .order-card { position: fixed; top: 16px; right: 16px; max-height: calc(100vh - 32px); width: min(380px, calc(100vw - 32px)); overflow-y: auto; z-index: 30; box-shadow: 0 12px 40px rgba(0, 0, 0, .18); }
+}
+.aff-table .cell-list a { word-break: normal; overflow-wrap: anywhere; }
+.aff-table td.cell-list { min-width: 140px; max-width: 240px; }
+.rule .num-input { width: 72px; }
+@media (max-width: 1180px) { .rule select { max-width: 150px; } }
+.aff-table th { white-space: normal; }
+.aff-table td.rule-cell { white-space: nowrap; }
+.aff-table .rule select { max-width: 132px; }
+.aff-table .rule .num-input { width: 64px; }
+.aff-table .rule { flex-wrap: nowrap; align-items: center; }
+.aff-table td.cell-list { min-width: 110px; max-width: 220px; }
+@media (max-width: 1180px) {
+  .aff-table td.rule-cell { min-width: 220px; white-space: normal; }
+  .aff-table .rule { flex-wrap: wrap; }
+  .aff-table .rule select { max-width: none; flex: 1 1 100%; }
+}
