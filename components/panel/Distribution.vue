@@ -17,7 +17,7 @@ const count = computed(() => props.rows.reduce((s, r) => s + r.count, 0))
       <li v-for="(r, i) in rows" :key="r.label">
         <i class="dot" :class="`tone-${i + 1}`" />
         <span class="dist-name">{{ r.label }}</span>
-        <span class="dist-val">{{ eurCompact(r.value) }}</span>
+        <span class="dist-val">{{ r.value >= 10000 ? eurCompact(r.value) : eur(r.value) }}</span>
         <span v-if="r.delta != null" class="dist-delta" :class="r.delta >= 0 ? 'up' : 'down'">
           <span aria-hidden="true">{{ r.delta >= 0 ? '▲' : '▼' }}</span> {{ Math.abs(r.delta).toLocaleString('es-ES') }} %
         </span>

@@ -24,7 +24,10 @@ export interface Forecast {
 const Z95 = 1.96
 const Z75 = 0.674
 
-export function forecast(values: number[], horizon = 4, scenario: Scenario = 'base'): Forecast | null {
+export function forecast(all: number[], horizon = 4, scenario: Scenario = 'base'): Forecast | null {
+  // Los meses a cero antes de la primera venta no son historia: se quitan para no inventar tendencia.
+  const first = all.findIndex((v) => v > 0)
+  const values = first < 0 ? [] : all.slice(first)
   const n = values.length
   if (n < 3) return null
   const xm = (n - 1) / 2

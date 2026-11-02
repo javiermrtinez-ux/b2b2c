@@ -109,7 +109,7 @@ defineExpose({ forecast: fc })
         <template v-else> · {{ eur(all[hover].value) }} vendido</template>
       </template>
       <template v-else-if="fc">Meses cerrados y proyección de los {{ horizon }} siguientes (*), con intervalo al 95 %.</template>
-      <template v-else>Hacen falta al menos 3 meses cerrados para proyectar.</template>
+      <template v-else>Hacen falta al menos 3 meses cerrados con ventas para proyectar.</template>
     </p>
   </div>
 </template>

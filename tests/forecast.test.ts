@@ -8,8 +8,11 @@ test('normalCdf: valores conocidos', () => {
   assert.ok(Math.abs(normalCdf(-1.96) - 0.025) < 1e-4)
 })
 
-test('forecast: menos de 3 meses no proyecta', () => {
+test('forecast: menos de 3 meses con ventas no proyecta (los ceros iniciales no cuentan)', () => {
   assert.equal(forecast([100, 200]), null)
+  assert.equal(forecast([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18.37]), null)
+  assert.equal(forecast([0, 0, 0]), null)
+  assert.notEqual(forecast([0, 0, 10, 20, 30]), null)
 })
 
 test('forecast: serie perfectamente lineal sigue la recta y no tiene banda', () => {
